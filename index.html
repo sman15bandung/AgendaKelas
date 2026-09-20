@@ -723,9 +723,12 @@ function renderTabs(){
   if(state.mode==='siswa'){
     if(!state.siswaAuth.loggedIn) return '';
     const tabsS = [['input','Input Absensi'],['riwayat','Riwayat']];
-    return `<div class="tabs">${tabsS.map(([k,l])=>`
-      <div class="tab-btn ${state.siswaTab===k?'active':''}" data-action="switch-siswa-tab" data-tab="${k}">${l}</div>
-    `).join('')}</div>`;
+    return `<div class="tabs" style="justify-content:space-between;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabsS.map(([k,l])=>`
+        <div class="tab-btn ${state.siswaTab===k?'active':''}" data-action="switch-siswa-tab" data-tab="${k}">${l}</div>
+      `).join('')}</div>
+      <div class="tab-btn" style="color:var(--danger);" data-action="siswa-logout">🚪 Keluar</div>
+    </div>`;
   }
   if(!state.adminAuthed) return '';
   const tabs = [['input','Input Absensi'],['riwayat','Riwayat'],['harian','Laporan Harian'],['jadwal','Jadwal Pelajaran'],['pin','Kelas & PIN'],['toleransi','Toleransi Waktu'],['laporan','Laporan Bulanan'],['cetak','Cetak Laporan']];
