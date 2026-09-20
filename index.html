@@ -339,6 +339,27 @@ function todayStr(){
   return local.toISOString().slice(0,10);
 }
 function uid(){ return 'id'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+
+// Urutkan nama kelas secara alami (X-1, X-2, ..., X-10, XI-1, ...) — bukan urutan teks biasa
+// yang akan menaruh "X-10" di antara "X-1" dan "X-2".
+function sortKelasList(list){
+  return list.slice().sort((a,b)=>{
+    const ax = String(a).match(/[^\d]+|\d+/g) || [];
+    const bx = String(b).match(/[^\d]+|\d+/g) || [];
+    const len = Math.max(ax.length, bx.length);
+    for(let i=0;i<len;i++){
+      const av = ax[i]||'', bv = bx[i]||'';
+      const an = /^\d+$/.test(av), bn = /^\d+$/.test(bv);
+      if(an && bn){
+        const diff = Number(av) - Number(bv);
+        if(diff !== 0) return diff;
+      } else if(av !== bv){
+        return av < bv ? -1 : 1;
+      }
+    }
+    return 0;
+  });
+}
 function esc(s){
   if(s===undefined||s===null) return '';
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -755,7 +776,7 @@ function renderTabContent(){
 
 /* ===================== LOGIN SISWA (PER KELAS) ===================== */
 function renderSiswaLogin(){
-  const kelasList = [...new Set(state.jadwal.map(j=>j.kelas))].sort();
+  const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   return `
   <div class="lock-screen">
     <div class="brand-mark" style="margin:0 auto 14px;transform:none;"><img src="${LOGO_SMAN15}" alt="Logo SMAN 15 Bandung"/></div>
@@ -795,7 +816,7 @@ function renderAdminLock(){
 /* ===================== INPUT SISWA ===================== */
 function renderInputSiswa(){
   const isAdminPreview = state.mode==='admin';
-  const kelasList = [...new Set(state.jadwal.map(j=>j.kelas))].sort();
+  const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   const kelasAktif = isAdminPreview ? state.ui.kelas : state.siswaAuth.kelas;
   const hariTerpilih = getHariFromTanggal(state.ui.tanggal);
   const jadwalFiltered = getAllJadwalBlocks().filter(j => j.kelas===kelasAktif && j.hari===hariTerpilih)
@@ -1022,7 +1043,7 @@ function renderRiwayatAdmin(){
   if(state.agendaLoading){
     return `<div class="empty-state"><div class="ico">⏳</div>Memuat riwayat absensi (mungkin agak lama kalau datanya sudah banyak)...</div>`;
   }
-  const kelasList = [...new Set(state.jadwal.map(j=>j.kelas))].sort();
+  const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   const guruList = [...new Set(state.jadwal.map(j=>j.guru))].sort();
   const f = state.ui.riwayatAdmin;
 
@@ -1481,7 +1502,7 @@ function renderModalGantiPin(){
 
 /* ===================== ADMIN: JADWAL ===================== */
 function renderJadwalAdmin(){
-  const kelasList = [...new Set(state.jadwal.map(j=>j.kelas))].sort();
+  const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   const filterKelas = state.ui.jadwalKelasFilter;
 
   const jadwalTampil = filterKelas==='semua' ? state.jadwal : state.jadwal.filter(j=>j.kelas===filterKelas);
@@ -1548,7 +1569,7 @@ function renderJadwalAdmin(){
 
 /* ===================== ADMIN: KELAS & PIN ===================== */
 function renderKelasPinAdmin(){
-  const kelasList = [...new Set(state.jadwal.map(j=>j.kelas))].sort();
+  const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   return `
     <h2 class="section-title">Kelas &amp; PIN Login Siswa</h2>
     <p class="hint">Setiap kelas punya PIN sendiri. Siswa harus memasukkan PIN kelasnya untuk bisa mengisi absensi, supaya kelas lain tidak salah input.</p>
@@ -1617,7 +1638,7 @@ function renderLaporan(){
   }
   const bulan = state.ui.laporanBulan, tahun = state.ui.laporanTahun;
   const guruList = [...new Set(state.jadwal.map(j=>j.guru))].sort();
-  const kelasList = [...new Set(state.jadwal.map(j=>j.kelas))].sort();
+  const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 
   const filtered = state.agenda.filter(e=>{
