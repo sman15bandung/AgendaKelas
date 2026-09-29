@@ -3580,13 +3580,17 @@ function doCetakAnalisis(){
 
 function buildAnalisisPrintHtml(A){
   const todayLabel = new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
-  const sections = A.hasil.map(h=>`
-    <h2 style="border-bottom:3px solid ${WARNA_TINGKAT[h.tingkat]||PALET.abu};color:${WARNA_TINGKAT[h.tingkat]||PALET.abu};">${judulTingkat(h.tingkat)}</h2>
-    ${blokGrafikTingkat(h)}
+  const sections = A.hasil.map((h,i)=>`
+  <section class="tingkat${i>0?' baru':''}">
+    <div class="blok-atas">
+      <h2 style="border-bottom:3px solid ${WARNA_TINGKAT[h.tingkat]||PALET.abu};color:${WARNA_TINGKAT[h.tingkat]||PALET.abu};">${judulTingkat(h.tingkat)}</h2>
+      ${blokGrafikTingkat(h)}
+    </div>
     <h3>Capaian &amp; Interpretasi per Mata Pelajaran</h3>
     ${tabelInterpretasi(h,'cetak')}
     <h3>Kesimpulan ${judulTingkat(h.tingkat)}</h3>
     <div class="kesimpulan">${esc(h.ringkasan)}</div>
+  </section>
   `).join('');
   return `<!DOCTYPE html>
 <html lang="id"><head><meta charset="UTF-8">
@@ -3606,6 +3610,15 @@ function buildAnalisisPrintHtml(A){
   .sign{ margin-top:36px; display:flex; justify-content:space-between; font-size:12px; page-break-inside:avoid; }
   .sign div{ text-align:center; width:220px; }
   .sign .line{ margin-top:50px; border-top:1px solid #333; }
+  /* Pagination: tiap tingkat mulai di halaman baru, blok kartu+donat tidak terpotong */
+  .tingkat.baru{ break-before:page; page-break-before:always; }
+  .blok-atas{ break-inside:avoid; page-break-inside:avoid; }
+  .blok-atas h2{ margin-top:0; }
+  .kesimpulan{ break-inside:avoid; page-break-inside:avoid; }
+  table{ break-inside:auto; }
+  thead{ display:table-header-group; }
+  tr{ break-inside:avoid; page-break-inside:avoid; }
+  h3{ break-after:avoid; page-break-after:avoid; }
   @media print{ .no-print{ display:none; } }
 </style></head>
 <body>
