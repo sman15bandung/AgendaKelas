@@ -79,6 +79,41 @@
   .mode-switch button.active{background:var(--ink);color:#fff;}
   .mode-switch button:not(:last-child){border-right:1.5px solid var(--ink);}
 
+  .sidebar{
+    position:fixed;top:0;left:0;bottom:0;width:260px;z-index:60;
+    background:var(--card);border-right:1.5px solid var(--line-strong);
+    padding:18px 12px;overflow-y:auto;
+    transform:translateX(-100%);transition:transform .2s ease;
+    box-shadow:2px 0 12px rgba(30,42,56,.10);
+  }
+  .sidebar.open{transform:none;}
+  .sb-brand{display:flex;align-items:center;gap:10px;padding:4px 6px 14px;border-bottom:1.5px solid var(--line);margin-bottom:12px;}
+  .sb-brand img{width:40px;height:40px;object-fit:contain;}
+  .sb-brand b{font-family:'Zilla Slab',serif;font-size:15px;line-height:1.2;display:block;}
+  .sb-brand span{font-size:11.5px;color:var(--ink-soft);}
+  .sb-item{
+    display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+    background:transparent;border:1.5px solid transparent;border-radius:9px;
+    padding:11px 12px;margin-bottom:6px;cursor:pointer;
+    font-family:'Inter',sans-serif;font-size:14px;color:var(--ink);line-height:1.3;
+  }
+  .sb-item:hover{background:var(--paper-dark);}
+  .sb-item.active{background:var(--paper-dark);border-color:var(--stamp-blue);font-weight:600;}
+  .sb-item .ico{font-size:18px;flex-shrink:0;}
+  .sb-item small{display:block;font-size:11px;color:var(--ink-soft);font-weight:400;}
+  .sb-toggle{
+    position:fixed;top:12px;left:12px;z-index:61;width:42px;height:42px;
+    border-radius:10px;border:1.5px solid var(--line-strong);background:var(--card);
+    font-size:20px;cursor:pointer;box-shadow:0 2px 6px rgba(30,42,56,.12);
+  }
+  .sb-overlay{display:none;position:fixed;inset:0;background:rgba(20,30,20,.35);z-index:59;}
+  .sb-overlay.show{display:block;}
+  @media (max-width:999px){ #app{padding-top:64px;} }
+  @media (min-width:1000px){
+    .sidebar{transform:none;box-shadow:none;}
+    .sb-toggle,.sb-overlay,.sb-overlay.show{display:none;}
+    body{padding-left:260px;}
+  }
   .tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;}
   .tab-btn{
     font-family:'Zilla Slab',serif;font-weight:600;font-size:14px;
@@ -273,11 +308,12 @@ const state = {
   agendaError:false,
   mode:'siswa',
   adminAuthed:false,
+  sidebarOpen:false,
   tab:'input',
   siswaTab:'input',
   jadwal:[],
   toleransi:{telat:10, keluarCepat:10},
-  adminPin:'1234',
+  adminPin:'1515',
   kelasPin:{},
   agenda:[],
   siswaAuth:{loggedIn:false, kelas:null},
@@ -317,6 +353,8 @@ const state = {
     harianTanggal: todayStr(),
     massal:{tanggal: todayStr(), kelas:'', statusGlobal:'hadir_tepat', materiGlobal:'', kegiatanGlobal:'', deskripsiTugasGlobal:'', rows:{}},
     cetak:{mapel:'', jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr()},
+    dash:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr()},
+    analisis:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr(), tingkat:'semua'},
     fotoView:null,
     saving:false,
     toast:null,
@@ -475,7 +513,12 @@ async function loadAll(){
       jamSelesai: normalizeJamStr(j.jamSelesai),
     }));
     state.toleransi = cfg.toleransi || {telat:10, keluarCepat:10};
-    state.adminPin = cfg.adminPin || '1234';
+    state.adminPin = cfg.adminPin || '1515';
+    /* Migrasi: PIN bawaan lama (1234) otomatis diganti menjadi 1515 */
+    if(!cfg.adminPin || String(cfg.adminPin)==='1234'){
+      state.adminPin = '1515';
+      try{ saveAdminPinRemote('1515').catch(()=>{}); }catch(_){}
+    }
     state.kelasPin = cfg.kelasPin || {};
     state.apiError = null;
     state.loaded = true;
@@ -663,6 +706,7 @@ function render(){
   }
   if(state.apiError){
     app.innerHTML = `
+      ${renderSidebar()}
       ${renderHeader()}
       <div class="panel">${renderApiErrorScreen()}</div>
       <footer class="foot">KARTU ABSENSI KELAS — dicatat oleh siswa, diverifikasi oleh waktu</footer>
@@ -671,6 +715,7 @@ function render(){
     return;
   }
   app.innerHTML = `
+    ${renderSidebar()}
     ${renderHeader()}
     ${renderTabs()}
     <div class="panel">${renderTabContent()}</div>
@@ -717,6 +762,7 @@ function renderHeader(){
 }
 
 function renderTabs(){
+  if(state.mode==='dashboard') return '';
   if(state.mode==='siswa'){
     if(!state.siswaAuth.loggedIn) return '';
     const tabsS = [['input','Input Absensi'],['riwayat','Riwayat']];
@@ -728,13 +774,14 @@ function renderTabs(){
     </div>`;
   }
   if(!state.adminAuthed) return '';
-  const tabs = [['input','Input Absensi'],['massal','Input Massal'],['riwayat','Riwayat'],['harian','Laporan Harian'],['jadwal','Jadwal Pelajaran'],['pin','Kelas & PIN'],['toleransi','Toleransi Waktu'],['laporan','Laporan Bulanan'],['cetak','Cetak Laporan']];
+  const tabs = [['input','Input Absensi'],['massal','Input Massal'],['riwayat','Riwayat'],['harian','Laporan Harian'],['jadwal','Jadwal Pelajaran'],['pin','Kelas & PIN'],['toleransi','Toleransi Waktu'],['laporan','Laporan Bulanan'],['analisis','Analisis Mapel'],['cetak','Cetak Laporan']];
   return `<div class="tabs">${tabs.map(([k,l])=>`
     <div class="tab-btn ${state.tab===k?'active':''}" data-action="switch-tab" data-tab="${k}">${l}</div>
   `).join('')}</div>`;
 }
 
 function renderTabContent(){
+  if(state.mode==='dashboard') return renderDashboardKehadiran();
   if(state.mode==='admin' && !state.adminAuthed) return renderAdminLock();
   if(state.mode==='admin'){
     if(state.tab==='massal') return renderInputMassal();
@@ -744,6 +791,7 @@ function renderTabContent(){
     if(state.tab==='pin') return renderKelasPinAdmin();
     if(state.tab==='toleransi') return renderToleransiAdmin();
     if(state.tab==='laporan') return renderLaporan();
+    if(state.tab==='analisis') return renderAnalisisMapel();
     if(state.tab==='cetak') return renderCetakLaporan();
   }
   if(state.mode==='siswa' && !state.siswaAuth.loggedIn) return renderSiswaLogin();
@@ -785,7 +833,7 @@ function renderAdminLock(){
     <div class="btn-row" style="justify-content:center;">
       <button class="btn btn-primary" data-action="admin-login">Masuk</button>
     </div>
-    <p class="hint" style="margin-top:16px;">PIN awal: 1234 (dapat diganti di tab Toleransi Waktu setelah masuk).</p>
+    <p class="hint" style="margin-top:16px;">PIN dapat diganti di tab Toleransi Waktu setelah masuk.</p>
   </div>`;
 }
 
@@ -2241,7 +2289,17 @@ function handleAction(action, el){
   const id = el.getAttribute('data-id');
   const kind = el.getAttribute('data-kind');
   switch(action){
+    case 'nav-mode': {
+      const m = el.getAttribute('data-mode');
+      if(state.mode==='admin' && m!=='admin') state.adminAuthed = false;
+      state.mode = m; state.tab = 'input'; state.sidebarOpen = false;
+      render(); break; }
+    case 'toggle-sidebar':
+      state.sidebarOpen = !state.sidebarOpen; render(); break;
+    case 'set-dash-jenis': state.ui.dash.jenis = el.getAttribute('data-val'); render(); break;
+    case 'filter-dash': doFilterDash(); break;
     case 'switch-mode':
+      if(state.mode==='admin') state.adminAuthed = false;
       state.mode = el.getAttribute('data-mode');
       state.tab = 'input';
       render(); break;
@@ -2338,6 +2396,9 @@ function handleAction(action, el){
     case 'filter-laporan-harian': doFilterLaporanHarian(); break;
     case 'set-cetak-jenis': state.ui.cetak.jenis = el.getAttribute('data-val'); render(); break;
     case 'cetak-laporan-mapel': doCetakLaporanMapel(); break;
+    case 'set-analisis-jenis': state.ui.analisis.jenis = el.getAttribute('data-val'); render(); break;
+    case 'filter-analisis': doFilterAnalisis(); break;
+    case 'cetak-analisis': doCetakAnalisis(); break;
   }
 }
 
@@ -3171,6 +3232,396 @@ function buildPrintHtml(d){
     <button onclick="window.print()">Cetak</button>
   </div>
 </body></html>`;
+}
+
+
+/* ===================== ANALISIS MAPEL PER TINGKAT (TANPA NAMA GURU) ===================== */
+const ANALISIS_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+function getTingkat(kelas){
+  const k = String(kelas||'').trim().toUpperCase();
+  let m = k.match(/^(XII|XI|X)(?![A-Z])/);
+  if(m) return m[1];
+  m = k.match(/^(12|11|10)/);
+  if(m) return {'10':'X','11':'XI','12':'XII'}[m[1]];
+  return 'Lainnya';
+}
+const URUTAN_TINGKAT = ['X','XI','XII','Lainnya'];
+
+function analisisPeriode(cfg){
+  let start, end, label;
+  if(cfg.jenis==='harian'){
+    start = end = cfg.tanggal || todayStr();
+    label = `Harian — ${getHariFromTanggal(start)}, ${fmtDateShort(start)}`;
+  } else if(cfg.jenis==='mingguan'){
+    const mon = getMondayOfWeek(cfg.tanggal||todayStr());
+    start = dateToStr(mon); end = dateToStr(addDays(mon,6));
+    label = `Mingguan — ${fmtDateShort(start)} s.d. ${fmtDateShort(end)}`;
+  } else {
+    const b = Number(cfg.bulan), t = Number(cfg.tahun);
+    const dim = new Date(t,b,0).getDate();
+    start = `${t}-${String(b).padStart(2,'0')}-01`;
+    end = `${t}-${String(b).padStart(2,'0')}-${String(dim).padStart(2,'0')}`;
+    label = `Bulanan — ${ANALISIS_BULAN[b-1]} ${t}`;
+  }
+  return {start, end, label};
+}
+
+function hitungMetrik(rows){
+  const m = {terjadwal:rows.length, hadir:0, tidakHadir:0, tanpaTugas:0, belum:0, terlambat:0, keluarTercatat:0, keluarCepat:0};
+  rows.forEach(r=>{
+    const e = r.entry;
+    if(!e){ m.belum++; return; }
+    if(e.tidakHadir){ m.tidakHadir++; if(!e.adaTugas) m.tanpaTugas++; return; }
+    m.hadir++;
+    if(e.statusMasuk==='terlambat') m.terlambat++;
+    if(e.statusKeluar || e.waktuKeluar){
+      m.keluarTercatat++;
+      if(e.statusKeluar==='cepat') m.keluarCepat++;
+    }
+  });
+  m.tercatat = m.hadir + m.tidakHadir;
+  const pct = (a,b)=> b>0 ? Math.round((a/b)*100) : null;
+  m.pctHadir = pct(m.hadir, m.tercatat);
+  m.pctMasukTepat = pct(m.hadir-m.terlambat, m.hadir);
+  m.pctKeluarTepat = pct(m.keluarTercatat-m.keluarCepat, m.keluarTercatat);
+  m.pctCakupan = pct(m.tercatat, m.terjadwal);
+  return m;
+}
+
+function interpretasiMetrik(m, subjek){
+  if(m.terjadwal===0) return 'Tidak ada sesi terjadwal pada periode ini.';
+  if(m.tercatat===0) return `Belum ada data absensi yang terinput untuk ${subjek} pada periode ini, sehingga belum dapat diinterpretasikan.`;
+  const out = [];
+  if(m.pctHadir>=90) out.push(`Kehadiran pembelajaran ${subjek} sangat baik (${m.pctHadir}%); hampir seluruh sesi terlaksana sesuai jadwal.`);
+  else if(m.pctHadir>=75) out.push(`Kehadiran pembelajaran ${subjek} cukup baik (${m.pctHadir}%), namun masih ada sesi yang tidak terlaksana.`);
+  else out.push(`Kehadiran pembelajaran ${subjek} perlu perhatian (${m.pctHadir}%) karena cukup banyak sesi yang tidak terlaksana.`);
+
+  if(m.tidakHadir>0){
+    if(m.tanpaTugas>0) out.push(`Dari ${m.tidakHadir} sesi yang tidak terlaksana, ${m.tanpaTugas} sesi tidak disertai tugas pengganti sehingga siswa kehilangan waktu belajar.`);
+    else out.push(`Seluruh ${m.tidakHadir} sesi yang tidak terlaksana disertai tugas pengganti, sehingga kegiatan belajar siswa tetap berjalan.`);
+  }
+  if(m.hadir>0){
+    if(m.pctMasukTepat>=90) out.push('Pembelajaran hampir selalu dimulai tepat waktu.');
+    else if(m.pctMasukTepat>=75) out.push(`Sebagian sesi dimulai terlambat (${m.terlambat} sesi), masih dalam batas wajar.`);
+    else out.push(`Keterlambatan memulai pelajaran cukup sering terjadi (${m.terlambat} sesi) sehingga mengurangi waktu efektif belajar.`);
+  }
+  if(m.keluarTercatat>0){
+    if(m.pctKeluarTepat>=90) out.push('Pembelajaran umumnya diakhiri sesuai waktu yang dijadwalkan.');
+    else if(m.pctKeluarTepat>=75) out.push(`Sebagian sesi diakhiri lebih cepat dari jadwal (${m.keluarCepat} sesi).`);
+    else out.push(`Sesi cukup sering diakhiri lebih cepat dari jadwal (${m.keluarCepat} sesi), sehingga durasi efektif pembelajaran berkurang.`);
+  }
+  if(m.pctCakupan<80) out.push(`Data baru mencakup ${m.pctCakupan}% dari sesi terjadwal (${m.belum} sesi belum diinput), sehingga hasil ini bersifat sementara.`);
+  if(m.pctHadir<75 || (m.pctMasukTepat!==null && m.pctMasukTepat<75)) out.push('Disarankan tindak lanjut berupa koordinasi jadwal dan pembinaan kedisiplinan pembelajaran.');
+  return out.join(' ');
+}
+
+function hitungAnalisis(cfg){
+  const per = analisisPeriode(cfg);
+  const today = todayStr();
+  const endEff = per.end > today ? today : per.end;
+  const blocks = getAllJadwalBlocks();
+  const rows = [];
+  if(per.start <= endEff){
+    let cur = new Date(per.start+'T00:00:00');
+    const end = new Date(endEff+'T00:00:00');
+    while(cur<=end){
+      const tgl = dateToStr(cur);
+      const hari = getHariFromTanggal(tgl);
+      blocks.filter(j=>j.hari===hari).forEach(jd=>{
+        rows.push({tanggal:tgl, jd, tingkat:getTingkat(jd.kelas), entry:entryExists(jd.id, tgl)});
+      });
+      cur = addDays(cur,1);
+    }
+  }
+  const tingkatSet = [...new Set(rows.map(r=>r.tingkat))]
+    .filter(t=>cfg.tingkat==='semua' || t===cfg.tingkat)
+    .sort((a,b)=>URUTAN_TINGKAT.indexOf(a)-URUTAN_TINGKAT.indexOf(b));
+  const hasil = tingkatSet.map(t=>{
+    const rt = rows.filter(r=>r.tingkat===t);
+    const mapelSet = [...new Set(rt.map(r=>r.jd.mapel))].sort((a,b)=>String(a).localeCompare(String(b)));
+    const mapel = mapelSet.map(mp=>{
+      const m = hitungMetrik(rt.filter(r=>r.jd.mapel===mp));
+      return Object.assign({nama:mp, interpretasi:interpretasiMetrik(m,'mata pelajaran ini')}, m);
+    });
+    const tot = hitungMetrik(rt);
+    let ringkasan = interpretasiMetrik(tot, `Kelas ${t}`);
+    const berdata = mapel.filter(x=>x.pctHadir!==null);
+    if(berdata.length>1){
+      const low = berdata.slice().sort((a,b)=>a.pctHadir-b.pctHadir)[0];
+      if(low.pctHadir<90) ringkasan += ` Mata pelajaran dengan kehadiran terendah adalah ${low.nama} (${low.pctHadir}%).`;
+    }
+    return {tingkat:t, total:tot, mapel, ringkasan};
+  });
+  const semuaRows = rows.filter(r=>cfg.tingkat==='semua' || r.tingkat===cfg.tingkat);
+  return {periode:per, rowsCount:semuaRows.length, hasil, endEff, terpotong: per.end>today};
+}
+
+function fmtPct(v){ return v===null ? '-' : v+'%'; }
+
+function renderAnalisisMapel(){
+  if(state.agendaLoading){
+    return `<div class="empty-state"><div class="ico">⏳</div>Memuat riwayat absensi (mungkin agak lama kalau datanya sudah banyak)...</div>`;
+  }
+  const c = state.ui.analisis;
+  const A = hitungAnalisis(c);
+  const tingkatAda = [...new Set(getAllJadwalBlocks().map(j=>getTingkat(j.kelas)))]
+    .sort((a,b)=>URUTAN_TINGKAT.indexOf(a)-URUTAN_TINGKAT.indexOf(b));
+  return `
+    <h2 class="section-title">Analisis per Mata Pelajaran</h2>
+    <p class="hint">Analisis kehadiran dan ketepatan waktu pembelajaran per mata pelajaran di setiap tingkat, lengkap dengan interpretasinya. Nama guru tidak ditampilkan.</p>
+    <label>Jenis Laporan</label>
+    <div class="radio-group">
+      ${[['harian','Harian'],['mingguan','Mingguan'],['bulanan','Bulanan']].map(([v,l])=>`<div class="radio-opt ${c.jenis===v?'selected':''}" data-action="set-analisis-jenis" data-val="${v}">${l}</div>`).join('')}
+    </div>
+    ${c.jenis==='bulanan' ? `
+    <div class="row">
+      <div><label>Bulan</label><select id="an-bulan">${ANALISIS_BULAN.map((m,i)=>`<option value="${i+1}" ${String(c.bulan)===String(i+1)?'selected':''}>${m}</option>`).join('')}</select></div>
+      <div><label>Tahun</label><input type="number" id="an-tahun" value="${c.tahun}"/></div>
+    </div>` : `
+    <div class="row">
+      <div><label>${c.jenis==='harian'?'Tanggal':'Tanggal (dalam minggu yang dituju)'}</label><input type="date" id="an-tanggal" value="${c.tanggal}"/></div>
+    </div>
+    ${c.jenis==='mingguan' ? '<p class="hint">Minggu dihitung dari Senin sampai Minggu pada minggu yang memuat tanggal di atas.</p>' : ''}`}
+    <label>Tingkat</label>
+    <select id="an-tingkat">
+      <option value="semua" ${c.tingkat==='semua'?'selected':''}>Semua Tingkat</option>
+      ${tingkatAda.map(t=>`<option value="${t}" ${c.tingkat===t?'selected':''}>${t==='Lainnya'?'Lainnya':'Kelas '+t}</option>`).join('')}
+    </select>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="filter-analisis">Tampilkan</button>
+      <button class="btn" data-action="cetak-analisis">🖨️ Cetak</button>
+    </div>
+
+    <p class="hint" style="margin-top:14px;"><b>${esc(A.periode.label)}</b>${A.terpotong ? ' — hanya dihitung sampai hari ini' : ''}</p>
+    ${A.hasil.length===0 ? `<div class="empty-state" style="margin-top:14px;"><div class="ico">📊</div>Tidak ada sesi terjadwal pada periode ini.</div>` :
+      A.hasil.map(h=>`
+      <div class="slot-card" style="margin-top:16px;">
+        <h3 style="font-family:'Zilla Slab',serif;margin:0 0 8px;font-size:17px;">${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h3>
+        <div class="stat-grid">
+          <div class="stat-card"><div class="num">${h.total.terjadwal}</div><div class="lbl">Sesi Terjadwal</div></div>
+          <div class="stat-card"><div class="num" style="color:var(--ok);">${fmtPct(h.total.pctHadir)}</div><div class="lbl">Kehadiran</div></div>
+          <div class="stat-card"><div class="num">${fmtPct(h.total.pctMasukTepat)}</div><div class="lbl">Masuk Tepat Waktu</div></div>
+          <div class="stat-card"><div class="num">${fmtPct(h.total.pctKeluarTepat)}</div><div class="lbl">Keluar Tepat Waktu</div></div>
+        </div>
+        <div class="table-scroll" style="margin-top:12px;">
+        <table>
+          <thead><tr><th>Mata Pelajaran</th><th>Sesi</th><th>Hadir</th><th>Tidak Hadir</th><th>Belum Input</th><th>% Hadir</th><th>% Masuk Tepat</th><th>% Keluar Tepat</th></tr></thead>
+          <tbody>${h.mapel.map(x=>`<tr>
+            <td>${esc(x.nama)}</td><td>${x.terjadwal}</td><td>${x.hadir}</td><td>${x.tidakHadir}</td><td>${x.belum}</td>
+            <td>${fmtPct(x.pctHadir)}</td><td>${fmtPct(x.pctMasukTepat)}</td><td>${fmtPct(x.pctKeluarTepat)}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+        </div>
+        <h4 style="margin:14px 0 4px;font-size:14px;">Interpretasi per Mata Pelajaran</h4>
+        ${h.mapel.map(x=>`<p style="margin:6px 0;font-size:13.5px;line-height:1.55;"><b>${esc(x.nama)}:</b> ${esc(x.interpretasi)}</p>`).join('')}
+        <h4 style="margin:14px 0 4px;font-size:14px;">Kesimpulan ${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h4>
+        <p style="margin:6px 0;font-size:13.5px;line-height:1.55;">${esc(h.ringkasan)}</p>
+      </div>`).join('')}
+  `;
+}
+
+function doFilterAnalisis(){
+  const c = state.ui.analisis;
+  const tg = document.getElementById('an-tanggal'); if(tg) c.tanggal = tg.value || todayStr();
+  const bl = document.getElementById('an-bulan'); if(bl) c.bulan = Number(bl.value);
+  const th = document.getElementById('an-tahun'); if(th) c.tahun = Number(th.value) || c.tahun;
+  const tk = document.getElementById('an-tingkat'); if(tk) c.tingkat = tk.value;
+  render();
+}
+
+function doCetakAnalisis(){
+  doFilterAnalisis();
+  const A = hitungAnalisis(state.ui.analisis);
+  if(A.hasil.length===0){ alert('Tidak ada data sesi pada periode ini untuk dicetak.'); return; }
+  const win = window.open('', '_blank');
+  if(!win){ alert('Popup diblokir oleh peramban. Izinkan popup untuk mencetak laporan.'); return; }
+  win.document.write(buildAnalisisPrintHtml(A));
+  win.document.close();
+  win.onload = ()=>{ win.focus(); win.print(); };
+}
+
+function buildAnalisisPrintHtml(A){
+  const todayLabel = new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+  const sections = A.hasil.map(h=>`
+    <h2>${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h2>
+    <div class="stat-row">
+      <div class="stat-box"><div class="n">${h.total.terjadwal}</div><div class="l">Sesi Terjadwal</div></div>
+      <div class="stat-box"><div class="n">${fmtPct(h.total.pctHadir)}</div><div class="l">Kehadiran</div></div>
+      <div class="stat-box"><div class="n">${fmtPct(h.total.pctMasukTepat)}</div><div class="l">Masuk Tepat Waktu</div></div>
+      <div class="stat-box"><div class="n">${fmtPct(h.total.pctKeluarTepat)}</div><div class="l">Keluar Tepat Waktu</div></div>
+    </div>
+    <table>
+      <thead><tr><th>Mata Pelajaran</th><th>Sesi</th><th>Hadir</th><th>Tidak Hadir</th><th>Belum Input</th><th>% Hadir</th><th>% Masuk Tepat</th><th>% Keluar Tepat</th></tr></thead>
+      <tbody>${h.mapel.map(x=>`<tr><td>${esc(x.nama)}</td><td>${x.terjadwal}</td><td>${x.hadir}</td><td>${x.tidakHadir}</td><td>${x.belum}</td><td>${fmtPct(x.pctHadir)}</td><td>${fmtPct(x.pctMasukTepat)}</td><td>${fmtPct(x.pctKeluarTepat)}</td></tr>`).join('')}</tbody>
+    </table>
+    <h3>Interpretasi per Mata Pelajaran</h3>
+    ${h.mapel.map(x=>`<p><b>${esc(x.nama)}:</b> ${esc(x.interpretasi)}</p>`).join('')}
+    <h3>Kesimpulan ${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h3>
+    <div class="kesimpulan">${esc(h.ringkasan)}</div>
+  `).join('');
+  return `<!DOCTYPE html>
+<html lang="id"><head><meta charset="UTF-8">
+<title>Analisis Mapel — ${esc(A.periode.label)}</title>
+<style>
+  @page{ size:A4; margin:16mm; }
+  body{ font-family: Georgia, 'Times New Roman', serif; color:#1E2A38; margin:0; padding:0 4px; }
+  .head{ text-align:center; border-bottom:3px double #1E2A38; padding-bottom:10px; margin-bottom:16px; }
+  .head h1{ font-size:18px; margin:0; }
+  .head p{ font-size:12px; margin:2px 0 0; color:#444; }
+  h2{ font-size:16px; margin:22px 0 6px; border-bottom:1px solid #999; padding-bottom:3px; page-break-after:avoid; }
+  h3{ font-size:13px; margin:14px 0 4px; }
+  p{ font-size:12px; line-height:1.55; margin:4px 0; text-align:justify; }
+  .meta{ font-size:12.5px; margin:2px 0; }
+  .meta b{ display:inline-block; min-width:110px; }
+  table{ width:100%; border-collapse:collapse; margin-top:8px; font-size:11px; }
+  th,td{ border:1px solid #999; padding:4px 6px; text-align:left; }
+  th{ background:#EDE6D3; }
+  .stat-row{ display:flex; gap:12px; margin:8px 0; flex-wrap:wrap; }
+  .stat-box{ border:1px solid #999; padding:6px 12px; border-radius:6px; min-width:100px; text-align:center; }
+  .stat-box .n{ font-size:17px; font-weight:bold; }
+  .stat-box .l{ font-size:10.5px; color:#555; }
+  .kesimpulan{ padding:10px; border:1.5px solid #999; border-radius:6px; background:#FBF9F2; font-size:12px; line-height:1.6; text-align:justify; }
+  .sign{ margin-top:36px; display:flex; justify-content:space-between; font-size:12px; page-break-inside:avoid; }
+  .sign div{ text-align:center; width:220px; }
+  .sign .line{ margin-top:50px; border-top:1px solid #333; }
+  @media print{ .no-print{ display:none; } }
+</style></head>
+<body>
+  <div class="head">
+    <h1>SMAN 15 BANDUNG</h1>
+    <p>Laporan Analisis Kehadiran &amp; Ketepatan Waktu Pembelajaran per Mata Pelajaran</p>
+  </div>
+  <div class="meta"><b>Periode</b> : ${esc(A.periode.label)}</div>
+  <div class="meta"><b>Dicetak pada</b> : ${todayLabel}</div>
+  ${sections}
+  <div class="sign">
+    <div>Wakil Kepala Sekolah<br/>Bidang Kurikulum<div class="line"></div></div>
+    <div>Kepala Sekolah<div class="line"></div></div>
+  </div>
+  <div class="no-print" style="margin-top:20px;text-align:center;"><button onclick="window.print()">Cetak</button></div>
+</body></html>`;
+}
+
+
+/* ===================== SIDEBAR ===================== */
+function renderSidebar(){
+  const items = [
+    ['siswa','🎓','Portal Siswa','Input absensi kelas'],
+    ['admin','🔐','Portal Admin','Perlu PIN'],
+    ['dashboard','📊','Dashboard Interpretasi Kehadiran Guru','Ringkasan tanpa nama guru'],
+  ];
+  return `
+  <button class="sb-toggle" data-action="toggle-sidebar" aria-label="Buka menu">☰</button>
+  <div class="sb-overlay ${state.sidebarOpen?'show':''}" data-action="toggle-sidebar"></div>
+  <aside class="sidebar ${state.sidebarOpen?'open':''}">
+    <div class="sb-brand">
+      ${LOGO_SRC ? `<img src="${LOGO_SRC}" alt="Logo"/>` : ''}
+      <div><b>SMAN 15 Bandung</b><span>Kartu Absensi Kelas</span></div>
+    </div>
+    ${items.map(([m,ico,l,sub])=>`
+      <button class="sb-item ${state.mode===m?'active':''}" data-action="nav-mode" data-mode="${m}">
+        <span class="ico">${ico}</span><span>${l}<small>${sub}</small></span>
+      </button>`).join('')}
+  </aside>`;
+}
+
+/* ===================== DASHBOARD INTERPRETASI KEHADIRAN GURU (TANPA NAMA GURU) ===================== */
+function finalisasiMetrik(m){
+  m.tercatat = m.hadir + m.tidakHadir;
+  const pct = (a,b)=> b>0 ? Math.round((a/b)*100) : null;
+  m.pctHadir = pct(m.hadir, m.tercatat);
+  m.pctMasukTepat = pct(m.hadir-m.terlambat, m.hadir);
+  m.pctKeluarTepat = pct(m.keluarTercatat-m.keluarCepat, m.keluarTercatat);
+  m.pctCakupan = pct(m.tercatat, m.terjadwal);
+  return m;
+}
+function gabungMetrik(list){
+  const m = {terjadwal:0,hadir:0,tidakHadir:0,tanpaTugas:0,belum:0,terlambat:0,keluarTercatat:0,keluarCepat:0};
+  list.forEach(x=>Object.keys(m).forEach(k=>{ m[k] += (x[k]||0); }));
+  return finalisasiMetrik(m);
+}
+function warnaPct(v){ return v===null ? 'var(--neutral)' : v>=90 ? 'var(--ok)' : v>=75 ? 'var(--warn)' : 'var(--danger)'; }
+
+function renderDashboardKehadiran(){
+  if(state.agendaLoading){
+    return `<div class="empty-state"><div class="ico">⏳</div>Memuat data absensi...</div>`;
+  }
+  const c = state.ui.dash;
+  const A = hitungAnalisis({jenis:c.jenis, bulan:c.bulan, tahun:c.tahun, tanggal:c.tanggal, tingkat:'semua'});
+  const total = gabungMetrik(A.hasil.map(h=>h.total));
+
+  // gabungkan mapel lintas tingkat
+  const perMapel = {};
+  A.hasil.forEach(h=>h.mapel.forEach(x=>{ (perMapel[x.nama] = perMapel[x.nama]||[]).push(x); }));
+  const mapelAgg = Object.entries(perMapel).map(([nama,arr])=>Object.assign({nama}, gabungMetrik(arr)));
+  const perhatian = mapelAgg
+    .filter(x=>x.tercatat>0 && ((x.pctHadir!==null&&x.pctHadir<75) || (x.pctMasukTepat!==null&&x.pctMasukTepat<75) || (x.pctKeluarTepat!==null&&x.pctKeluarTepat<75)))
+    .sort((a,b)=>(a.pctHadir??101)-(b.pctHadir??101)).slice(0,8);
+
+  const bars = [];
+  A.hasil.forEach(h=>{
+    const nm = h.tingkat==='Lainnya' ? 'Lainnya' : 'Kelas '+h.tingkat;
+    [['Kehadiran',h.total.pctHadir],['Masuk Tepat',h.total.pctMasukTepat],['Keluar Tepat',h.total.pctKeluarTepat]].forEach(([l,v])=>{
+      if(v!==null) bars.push({label:`${nm} · ${l}`, value:v, color:warnaPct(v)});
+    });
+  });
+
+  const modeBtn = (v,l)=>`<div class="radio-opt ${c.jenis===v?'selected':''}" data-action="set-dash-jenis" data-val="${v}">${l}</div>`;
+  return `
+    <h2 class="section-title">Dashboard Interpretasi Kehadiran Guru</h2>
+    <p class="hint">Ringkasan kehadiran dan ketepatan waktu pembelajaran beserta interpretasinya. Nama guru tidak ditampilkan.</p>
+    <div class="radio-group">${modeBtn('harian','Harian')}${modeBtn('mingguan','Mingguan')}${modeBtn('bulanan','Bulanan')}</div>
+    ${c.jenis==='bulanan' ? `
+    <div class="row">
+      <div><label>Bulan</label><select id="ds-bulan">${ANALISIS_BULAN.map((m,i)=>`<option value="${i+1}" ${String(c.bulan)===String(i+1)?'selected':''}>${m}</option>`).join('')}</select></div>
+      <div><label>Tahun</label><input type="number" id="ds-tahun" value="${c.tahun}"/></div>
+    </div>` : `
+    <div class="row"><div><label>${c.jenis==='harian'?'Tanggal':'Tanggal (dalam minggu yang dituju)'}</label><input type="date" id="ds-tanggal" value="${c.tanggal}"/></div></div>`}
+    <div class="btn-row"><button class="btn btn-primary" data-action="filter-dash">Tampilkan</button></div>
+
+    <p class="hint" style="margin-top:14px;"><b>${esc(A.periode.label)}</b>${A.terpotong?' — dihitung sampai hari ini':''}</p>
+    ${total.terjadwal===0 ? `<div class="empty-state" style="margin-top:14px;"><div class="ico">📊</div>Tidak ada sesi terjadwal pada periode ini.</div>` : `
+    <div class="stat-grid" style="margin-top:8px;">
+      <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctHadir)};">${fmtPct(total.pctHadir)}</div><div class="lbl">Kehadiran Guru</div></div>
+      <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctMasukTepat)};">${fmtPct(total.pctMasukTepat)}</div><div class="lbl">Masuk Tepat Waktu</div></div>
+      <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctKeluarTepat)};">${fmtPct(total.pctKeluarTepat)}</div><div class="lbl">Keluar Tepat Waktu</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--neutral);">${fmtPct(total.pctCakupan)}</div><div class="lbl">Data Terinput (${total.tercatat}/${total.terjadwal} sesi)</div></div>
+    </div>
+
+    <div class="slot-card" style="margin-top:16px;">
+      <h3 style="font-family:'Zilla Slab',serif;margin:0 0 6px;font-size:16px;">Interpretasi Umum</h3>
+      <p style="margin:0;font-size:14px;line-height:1.6;">${esc(interpretasiMetrik(total,'seluruh mata pelajaran'))}</p>
+      <p class="hint" style="margin:8px 0 0;">Acuan: ≥90% sangat baik, 75–89% cukup baik, &lt;75% perlu perhatian.</p>
+    </div>
+
+    <div class="slot-card" style="margin-top:16px;">
+      <div class="hint" style="margin:0 0 8px;">Capaian per tingkat (hijau ≥90%, kuning 75–89%, merah &lt;75%)</div>
+      ${svgBarChart(bars,{max:100,suffix:'%'})}
+    </div>
+
+    <div class="slot-card" style="margin-top:16px;">
+      <h3 style="font-family:'Zilla Slab',serif;margin:0 0 6px;font-size:16px;">Mata Pelajaran yang Perlu Perhatian</h3>
+      ${perhatian.length===0 ? `<p style="margin:0;font-size:14px;">Tidak ada mata pelajaran dengan capaian di bawah 75% pada periode ini.</p>` :
+        perhatian.map(x=>`<p style="margin:8px 0;font-size:13.5px;line-height:1.55;"><b>${esc(x.nama)}</b> — kehadiran ${fmtPct(x.pctHadir)}, masuk tepat ${fmtPct(x.pctMasukTepat)}, keluar tepat ${fmtPct(x.pctKeluarTepat)}.<br>${esc(interpretasiMetrik(x,'mata pelajaran ini'))}</p>`).join('')}
+    </div>
+
+    ${A.hasil.map(h=>`
+    <div class="slot-card" style="margin-top:16px;">
+      <h3 style="font-family:'Zilla Slab',serif;margin:0 0 6px;font-size:16px;">Interpretasi ${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h3>
+      <p style="margin:0 0 6px;font-size:13px;color:var(--ink-soft);">${h.mapel.length} mata pelajaran · ${h.total.terjadwal} sesi terjadwal · kehadiran ${fmtPct(h.total.pctHadir)}</p>
+      <p style="margin:0;font-size:14px;line-height:1.6;">${esc(h.ringkasan)}</p>
+    </div>`).join('')}
+    `}
+  `;
+}
+
+function doFilterDash(){
+  const c = state.ui.dash;
+  const tg = document.getElementById('ds-tanggal'); if(tg) c.tanggal = tg.value || todayStr();
+  const bl = document.getElementById('ds-bulan'); if(bl) c.bulan = Number(bl.value);
+  const th = document.getElementById('ds-tahun'); if(th) c.tahun = Number(th.value) || c.tahun;
+  render();
 }
 
 /* ===================== INIT ===================== */
