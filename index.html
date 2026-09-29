@@ -3405,11 +3405,11 @@ function svgDonut(judul, slices, tengah, sub){
   }
   const legend = slices.map(x=>{
     const pc = total>0 ? Math.round(x.value/total*100) : 0;
-    return `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#334155;margin:2px 0;"><span style="width:11px;height:11px;border-radius:3px;background:${x.color};display:inline-block;flex-shrink:0;"></span>${esc(x.label)}: <b>${x.value}</b> (${pc}%)</div>`;
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#334155;margin:1px 0;"><span style="width:10px;height:11px;border-radius:3px;background:${x.color};display:inline-block;flex-shrink:0;"></span>${esc(x.label)}: <b>${x.value}</b> (${pc}%)</div>`;
   }).join('');
-  return `<div style="flex:1;min-width:190px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:10px 12px;text-align:center;page-break-inside:avoid;">
-    <div style="font-size:12.5px;font-weight:700;color:#1E293B;margin-bottom:4px;">${esc(judul)}</div>
-    <svg viewBox="0 0 160 160" width="140" height="140" xmlns="http://www.w3.org/2000/svg">
+  return `<div style="flex:1;min-width:170px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:6px 10px;text-align:center;page-break-inside:avoid;">
+    <div style="font-size:12px;font-weight:700;color:#1E293B;margin-bottom:0;">${esc(judul)}</div>
+    <svg viewBox="0 0 160 160" width="112" height="112" xmlns="http://www.w3.org/2000/svg">
       <circle cx="80" cy="80" r="${R}" fill="none" stroke="#EEF2F7" stroke-width="26"/>
       ${arcs}
       <text x="80" y="82" text-anchor="middle" font-size="24" font-weight="800" fill="#1E293B">${esc(String(tengah))}</text>
@@ -3447,6 +3447,21 @@ const SERI_METRIK = [
   {label:'Keluar Tepat', color:PALET.oranye},
 ];
 
+
+function svgBatangMini(vals){
+  const w = 210, h = 3*11+2*3, lab = 0, trackW = w-34;
+  const bars = SERI_METRIK.map((sr,j)=>{
+    const v = vals[j], y = j*14;
+    if(v===null || v===undefined) return `<rect x="0" y="${y}" width="${trackW}" height="11" rx="4" fill="#F1F5F9"/><text x="6" y="${y+9}" font-size="8.5" fill="#94A3B8">belum ada data</text>`;
+    const bw = Math.max(3, trackW*v/100);
+    return `<rect x="0" y="${y}" width="${trackW}" height="11" rx="4" fill="#F1F5F9"/><rect x="0" y="${y}" width="${bw.toFixed(1)}" height="11" rx="4" fill="${sr.color}"><title>${esc(sr.label)}: ${v}%</title></rect><text x="${trackW+5}" y="${y+9.5}" font-size="10" fill="#334155">${v}%</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:210px;display:block;" xmlns="http://www.w3.org/2000/svg">${bars}</svg>`;
+}
+function legendSeri(){
+  return `<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:#334155;margin:8px 0 2px;">${SERI_METRIK.map(sr=>`<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:11px;height:11px;border-radius:3px;background:${sr.color};display:inline-block;"></span>${esc(sr.label)}</span>`).join('')}</div>`;
+}
+
 /* Blok visual satu tingkat: kartu warna-warni + donat + batang per mapel */
 function blokGrafikTingkat(h){
   const t = h.total;
@@ -3456,7 +3471,7 @@ function blokGrafikTingkat(h){
     ${kartuStat(fmtPct(t.pctMasukTepat),'Masuk Tepat Waktu',PALET.hijau,'#E8F9EE')}
     ${kartuStat(fmtPct(t.pctKeluarTepat),'Keluar Tepat Waktu',PALET.oranye,'#FEF3E0')}
   </div>`;
-  const donat = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
+  const donat = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">
     ${svgDonut('Status Kehadiran',[
       {label:'Hadir',value:t.hadir,color:PALET.hijau},
       {label:'Tidak Hadir',value:t.tidakHadir,color:PALET.merah},
@@ -3468,27 +3483,29 @@ function blokGrafikTingkat(h){
       {label:'Tepat Waktu',value:t.keluarTercatat-t.keluarCepat,color:PALET.biru},
       {label:'Lebih Cepat',value:t.keluarCepat,color:PALET.oranye}], fmtPct(t.pctKeluarTepat), 'tepat waktu')}
   </div>`;
-  const batang = `<div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:10px 12px;margin-top:8px;">
-    <div style="font-size:12.5px;font-weight:700;color:#1E293B;margin-bottom:2px;">Capaian per Mata Pelajaran (%)</div>
-    ${svgBatangGrup(h.mapel.map(x=>({label:x.nama, vals:[x.pctHadir,x.pctMasukTepat,x.pctKeluarTepat]})), SERI_METRIK)}
-  </div>`;
-  return kartu + donat + batang;
+  return kartu + donat;
 }
 
-/* Tabel Mata Pelajaran | Interpretasi */
+/* Tabel Mata Pelajaran | Grafik Capaian | Interpretasi  (grafik tepat di sebelah interpretasinya) */
 function tabelInterpretasi(h, mode){
-  const cellUl = list => `<ul style="margin:0;padding-left:16px;">${list.map(k=>`<li style="margin:2px 0;">${esc(k)}</li>`).join('')}</ul>`;
-  return `<table class="tbl-interp" style="width:100%;border-collapse:collapse;margin-top:6px;font-size:${mode==='cetak'?'11':'13'}px;line-height:1.5;">
+  const fs = mode==='cetak' ? 10.5 : 13;
+  const th = 'background:#EEF2FF;border:1px solid #CBD5E1;padding:6px 8px;text-align:left;';
+  const td = 'border:1px solid #CBD5E1;padding:6px 8px;vertical-align:top;';
+  const cellUl = list => `<ul style="margin:0;padding-left:15px;">${list.map(k=>`<li style="margin:1px 0;">${esc(k)}</li>`).join('')}</ul>`;
+  return `${legendSeri()}
+  <table class="tbl-interp" style="width:100%;border-collapse:collapse;margin-top:4px;font-size:${fs}px;line-height:1.45;">
     <thead><tr>
-      <th style="background:#EEF2FF;border:1px solid #CBD5E1;padding:7px 9px;text-align:left;width:26%;">Mata Pelajaran</th>
-      <th style="background:#EEF2FF;border:1px solid #CBD5E1;padding:7px 9px;text-align:left;">Interpretasi</th>
+      <th style="${th}width:17%;">Mata Pelajaran</th>
+      <th style="${th}width:27%;">Capaian (%)</th>
+      <th style="${th}">Interpretasi</th>
     </tr></thead>
     <tbody>${h.mapel.map((x,i)=>`<tr style="background:${i%2?'#F8FAFC':'#FFFFFF'};page-break-inside:avoid;">
-      <td style="border:1px solid #CBD5E1;padding:7px 9px;vertical-align:top;font-weight:700;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${warnaLevel(x)};margin-right:6px;"></span>${esc(x.nama)}</td>
-      <td style="border:1px solid #CBD5E1;padding:7px 9px;vertical-align:top;">${cellUl(x.interpList)}</td>
+      <td style="${td}font-weight:700;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${warnaLevel(x)};margin-right:6px;"></span>${esc(x.nama)}</td>
+      <td style="${td}">${svgBatangMini([x.pctHadir,x.pctMasukTepat,x.pctKeluarTepat])}</td>
+      <td style="${td}">${cellUl(x.interpList)}</td>
     </tr>`).join('')}</tbody>
   </table>
-  <div style="font-size:11px;color:#64748B;margin-top:4px;"><span style="color:${PALET.hijau};">●</span> sangat baik (≥90%) &nbsp; <span style="color:${PALET.oranye};">●</span> cukup baik (75–89%) &nbsp; <span style="color:${PALET.merah};">●</span> perlu perhatian (&lt;75%) &nbsp; <span style="color:${PALET.abu};">●</span> belum ada data</div>`;
+  <div style="font-size:10.5px;color:#64748B;margin-top:4px;">Titik warna: <span style="color:${PALET.hijau};">●</span> sangat baik (≥90%) &nbsp; <span style="color:${PALET.oranye};">●</span> cukup baik (75–89%) &nbsp; <span style="color:${PALET.merah};">●</span> perlu perhatian (&lt;75%) &nbsp; <span style="color:${PALET.abu};">●</span> belum ada data</div>`;
 }
 
 function judulTingkat(t){ return t==='Lainnya' ? 'Tingkat Lainnya' : 'Kelas '+t; }
@@ -3533,9 +3550,9 @@ function renderAnalisisMapel(){
       <div class="slot-card" style="margin-top:16px;border-left:6px solid ${WARNA_TINGKAT[h.tingkat]||PALET.abu};">
         <h3 style="font-family:'Zilla Slab',serif;margin:0 0 4px;font-size:18px;color:${WARNA_TINGKAT[h.tingkat]||PALET.abu};">${judulTingkat(h.tingkat)}</h3>
         ${blokGrafikTingkat(h)}
-        <h4 style="margin:16px 0 4px;font-size:14px;">Interpretasi per Mata Pelajaran</h4>
+        <h4 style="margin:10px 0 2px;font-size:14px;">Capaian &amp; Interpretasi per Mata Pelajaran</h4>
         <div class="table-scroll">${tabelInterpretasi(h,'layar')}</div>
-        <h4 style="margin:16px 0 4px;font-size:14px;">Kesimpulan ${judulTingkat(h.tingkat)}</h4>
+        <h4 style="margin:12px 0 4px;font-size:14px;">Kesimpulan ${judulTingkat(h.tingkat)}</h4>
         <p style="margin:6px 0;font-size:13.5px;line-height:1.55;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px;">${esc(h.ringkasan)}</p>
       </div>`).join('')}
   `;
@@ -3566,7 +3583,7 @@ function buildAnalisisPrintHtml(A){
   const sections = A.hasil.map(h=>`
     <h2 style="border-bottom:3px solid ${WARNA_TINGKAT[h.tingkat]||PALET.abu};color:${WARNA_TINGKAT[h.tingkat]||PALET.abu};">${judulTingkat(h.tingkat)}</h2>
     ${blokGrafikTingkat(h)}
-    <h3>Interpretasi per Mata Pelajaran</h3>
+    <h3>Capaian &amp; Interpretasi per Mata Pelajaran</h3>
     ${tabelInterpretasi(h,'cetak')}
     <h3>Kesimpulan ${judulTingkat(h.tingkat)}</h3>
     <div class="kesimpulan">${esc(h.ringkasan)}</div>
@@ -3581,8 +3598,8 @@ function buildAnalisisPrintHtml(A){
   .head{ text-align:center; border-bottom:3px double #1E2A38; padding-bottom:10px; margin-bottom:14px; }
   .head h1{ font-size:19px; margin:0; letter-spacing:.5px; }
   .head p{ font-size:12px; margin:3px 0 0; color:#444; }
-  h2{ font-size:17px; margin:24px 0 8px; padding-bottom:3px; page-break-after:avoid; }
-  h3{ font-size:13px; margin:16px 0 4px; page-break-after:avoid; }
+  h2{ font-size:16px; margin:16px 0 6px; padding-bottom:2px; page-break-after:avoid; }
+  h3{ font-size:12.5px; margin:8px 0 2px; page-break-after:avoid; }
   .meta{ font-size:12.5px; margin:2px 0; }
   .meta b{ display:inline-block; min-width:110px; }
   .kesimpulan{ padding:10px 12px; border:1px solid #CBD5E1; border-radius:8px; background:#F8FAFC; font-size:12px; line-height:1.6; text-align:justify; }
@@ -3599,10 +3616,6 @@ function buildAnalisisPrintHtml(A){
   <div class="meta"><b>Periode</b> : ${esc(A.periode.label)}</div>
   <div class="meta"><b>Dicetak pada</b> : ${todayLabel}</div>
   ${sections}
-  <div class="sign">
-    <div>Wakil Kepala Sekolah<br/>Bidang Kurikulum<div class="line"></div></div>
-    <div>Kepala Sekolah<div class="line"></div></div>
-  </div>
   <div class="no-print" style="margin-top:20px;text-align:center;"><button onclick="window.print()">Cetak</button></div>
 </body></html>`;
 }
