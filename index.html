@@ -3237,6 +3237,8 @@ function buildPrintHtml(d){
 
 /* ===================== ANALISIS MAPEL PER TINGKAT (TANPA NAMA GURU) ===================== */
 const ANALISIS_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+const PALET = {biru:'#3B82F6', hijau:'#22C55E', oranye:'#F59E0B', merah:'#EF4444', ungu:'#8B5CF6', tosca:'#14B8A6', pink:'#EC4899', abu:'#94A3B8'};
+const WARNA_TINGKAT = {X:'#3B82F6', XI:'#10B981', XII:'#8B5CF6', Lainnya:'#F59E0B'};
 
 function getTingkat(kelas){
   const k = String(kelas||'').trim().toUpperCase();
@@ -3247,6 +3249,20 @@ function getTingkat(kelas){
   return 'Lainnya';
 }
 const URUTAN_TINGKAT = ['X','XI','XII','Lainnya'];
+
+/* Rapikan nama mapel: spasi ganda, titik dua di ujung, dan nama yang terulang ("Aksi Bergizi Aksi Bergizi") */
+const _mapelCanon = {};
+function normMapel(n){
+  let t = String(n||'').replace(/\s+/g,' ').replace(/\s*:+\s*$/,'').trim();
+  const w = t.split(' ');
+  if(w.length>=2 && w.length%2===0){
+    const h = w.length/2;
+    if(w.slice(0,h).join(' ').toLowerCase() === w.slice(h).join(' ').toLowerCase()) t = w.slice(0,h).join(' ');
+  }
+  const key = t.toLowerCase();
+  if(!_mapelCanon[key]) _mapelCanon[key] = t;
+  return _mapelCanon[key];
+}
 
 function analisisPeriode(cfg){
   let start, end, label;
@@ -3289,9 +3305,10 @@ function hitungMetrik(rows){
   return m;
 }
 
-function interpretasiMetrik(m, subjek){
-  if(m.terjadwal===0) return 'Tidak ada sesi terjadwal pada periode ini.';
-  if(m.tercatat===0) return `Belum ada data absensi yang terinput untuk ${subjek} pada periode ini, sehingga belum dapat diinterpretasikan.`;
+/* Interpretasi dalam bentuk daftar kalimat (untuk sel tabel) */
+function interpretasiList(m, subjek){
+  if(m.terjadwal===0) return ['Tidak ada sesi terjadwal pada periode ini.'];
+  if(m.tercatat===0) return [`Belum ada data absensi yang terinput untuk ${subjek} pada periode ini, sehingga belum dapat diinterpretasikan.`];
   const out = [];
   if(m.pctHadir>=90) out.push(`Kehadiran pembelajaran ${subjek} sangat baik (${m.pctHadir}%); hampir seluruh sesi terlaksana sesuai jadwal.`);
   else if(m.pctHadir>=75) out.push(`Kehadiran pembelajaran ${subjek} cukup baik (${m.pctHadir}%), namun masih ada sesi yang tidak terlaksana.`);
@@ -3313,7 +3330,15 @@ function interpretasiMetrik(m, subjek){
   }
   if(m.pctCakupan<80) out.push(`Data baru mencakup ${m.pctCakupan}% dari sesi terjadwal (${m.belum} sesi belum diinput), sehingga hasil ini bersifat sementara.`);
   if(m.pctHadir<75 || (m.pctMasukTepat!==null && m.pctMasukTepat<75)) out.push('Disarankan tindak lanjut berupa koordinasi jadwal dan pembinaan kedisiplinan pembelajaran.');
-  return out.join(' ');
+  return out;
+}
+function interpretasiMetrik(m, subjek){ return interpretasiList(m, subjek).join(' '); }
+
+function warnaLevel(m){
+  if(!m || m.tercatat===0) return PALET.abu;
+  const v = [m.pctHadir, m.pctMasukTepat, m.pctKeluarTepat].filter(x=>x!==null);
+  const low = Math.min(...v);
+  return low>=90 ? PALET.hijau : low>=75 ? PALET.oranye : PALET.merah;
 }
 
 function hitungAnalisis(cfg){
@@ -3329,7 +3354,7 @@ function hitungAnalisis(cfg){
       const tgl = dateToStr(cur);
       const hari = getHariFromTanggal(tgl);
       blocks.filter(j=>j.hari===hari).forEach(jd=>{
-        rows.push({tanggal:tgl, jd, tingkat:getTingkat(jd.kelas), entry:entryExists(jd.id, tgl)});
+        rows.push({tanggal:tgl, jd, mapel:normMapel(jd.mapel), tingkat:getTingkat(jd.kelas), entry:entryExists(jd.id, tgl)});
       });
       cur = addDays(cur,1);
     }
@@ -3339,10 +3364,11 @@ function hitungAnalisis(cfg){
     .sort((a,b)=>URUTAN_TINGKAT.indexOf(a)-URUTAN_TINGKAT.indexOf(b));
   const hasil = tingkatSet.map(t=>{
     const rt = rows.filter(r=>r.tingkat===t);
-    const mapelSet = [...new Set(rt.map(r=>r.jd.mapel))].sort((a,b)=>String(a).localeCompare(String(b)));
+    const mapelSet = [...new Set(rt.map(r=>r.mapel))].sort((a,b)=>String(a).localeCompare(String(b)));
     const mapel = mapelSet.map(mp=>{
-      const m = hitungMetrik(rt.filter(r=>r.jd.mapel===mp));
-      return Object.assign({nama:mp, interpretasi:interpretasiMetrik(m,'mata pelajaran ini')}, m);
+      const m = hitungMetrik(rt.filter(r=>r.mapel===mp));
+      const list = interpretasiList(m,'mata pelajaran ini');
+      return Object.assign({nama:mp, interpretasi:list.join(' '), interpList:list}, m);
     });
     const tot = hitungMetrik(rt);
     let ringkasan = interpretasiMetrik(tot, `Kelas ${t}`);
@@ -3358,6 +3384,114 @@ function hitungAnalisis(cfg){
 }
 
 function fmtPct(v){ return v===null ? '-' : v+'%'; }
+
+/* ---------- Komponen grafik (SVG/HTML inline, dipakai di layar & cetak) ---------- */
+function kartuStat(num, label, warna, bg){
+  return `<div style="flex:1;min-width:120px;background:${bg};border-left:5px solid ${warna};border-radius:10px;padding:10px 14px;">
+    <div style="font-size:24px;font-weight:800;color:${warna};line-height:1.1;">${num}</div>
+    <div style="font-size:11.5px;color:#475569;margin-top:2px;">${label}</div></div>`;
+}
+
+function svgDonut(judul, slices, tengah, sub){
+  const total = slices.reduce((a,x)=>a+x.value,0);
+  const R = 54, C = 2*Math.PI*R;
+  let arcs = '', off = 0;
+  if(total>0){
+    slices.filter(x=>x.value>0).forEach(x=>{
+      const len = C * x.value/total;
+      arcs += `<circle cx="80" cy="80" r="${R}" fill="none" stroke="${x.color}" stroke-width="26" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 80 80)"><title>${esc(x.label)}: ${x.value}</title></circle>`;
+      off += len;
+    });
+  }
+  const legend = slices.map(x=>{
+    const pc = total>0 ? Math.round(x.value/total*100) : 0;
+    return `<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#334155;margin:2px 0;"><span style="width:11px;height:11px;border-radius:3px;background:${x.color};display:inline-block;flex-shrink:0;"></span>${esc(x.label)}: <b>${x.value}</b> (${pc}%)</div>`;
+  }).join('');
+  return `<div style="flex:1;min-width:190px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:10px 12px;text-align:center;page-break-inside:avoid;">
+    <div style="font-size:12.5px;font-weight:700;color:#1E293B;margin-bottom:4px;">${esc(judul)}</div>
+    <svg viewBox="0 0 160 160" width="140" height="140" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="80" cy="80" r="${R}" fill="none" stroke="#EEF2F7" stroke-width="26"/>
+      ${arcs}
+      <text x="80" y="82" text-anchor="middle" font-size="24" font-weight="800" fill="#1E293B">${esc(String(tengah))}</text>
+      <text x="80" y="98" text-anchor="middle" font-size="10" fill="#64748B">${esc(sub||'')}</text>
+    </svg>
+    <div style="text-align:left;display:inline-block;">${legend}</div>
+  </div>`;
+}
+
+function svgBatangGrup(items, series){
+  if(!items.length) return '<div style="font-size:12px;color:#64748B;">Belum ada data.</div>';
+  const w = 680, leftPad = 190, rightPad = 46, barH = 11, gap = 3, rowGap = 16, top = 30;
+  const rowH = series.length*(barH+gap) - gap;
+  const h = top + items.length*(rowH+rowGap);
+  const trackW = w - leftPad - rightPad;
+  const legend = series.map((sr,i)=>`<g transform="translate(${leftPad + i*150},6)"><rect width="12" height="12" rx="3" fill="${sr.color}"/><text x="18" y="10.5" font-size="11" fill="#334155">${esc(sr.label)}</text></g>`).join('');
+  const rows = items.map((it,i)=>{
+    const y0 = top + i*(rowH+rowGap);
+    const nm = it.label.length>30 ? it.label.slice(0,29)+'…' : it.label;
+    const bars = series.map((sr,j)=>{
+      const v = it.vals[j];
+      const y = y0 + j*(barH+gap);
+      if(v===null || v===undefined) return `<rect x="${leftPad}" y="${y}" width="${trackW}" height="${barH}" rx="4" fill="#F1F5F9"/><text x="${leftPad+6}" y="${y+barH-2}" font-size="9" fill="#94A3B8">belum ada data</text>`;
+      const bw = Math.max(3, trackW*v/100);
+      return `<rect x="${leftPad}" y="${y}" width="${trackW}" height="${barH}" rx="4" fill="#F1F5F9"/><rect x="${leftPad}" y="${y}" width="${bw.toFixed(1)}" height="${barH}" rx="4" fill="${sr.color}"><title>${esc(it.label)} — ${esc(sr.label)}: ${v}%</title></rect><text x="${leftPad+trackW+6}" y="${y+barH-2}" font-size="10" fill="#334155">${v}%</text>`;
+    }).join('');
+    return `<g><title>${esc(it.label)}</title><text x="${leftPad-8}" y="${y0+rowH/2+4}" text-anchor="end" font-size="11.5" font-weight="600" fill="#1E293B">${esc(nm)}</text>${bars}</g>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="max-width:100%;" xmlns="http://www.w3.org/2000/svg">${legend}${rows}</svg>`;
+}
+
+const SERI_METRIK = [
+  {label:'Kehadiran', color:PALET.biru},
+  {label:'Masuk Tepat', color:PALET.hijau},
+  {label:'Keluar Tepat', color:PALET.oranye},
+];
+
+/* Blok visual satu tingkat: kartu warna-warni + donat + batang per mapel */
+function blokGrafikTingkat(h){
+  const t = h.total;
+  const kartu = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0;">
+    ${kartuStat(t.terjadwal,'Sesi Terjadwal',PALET.ungu,'#F3EEFF')}
+    ${kartuStat(fmtPct(t.pctHadir),'Kehadiran',PALET.biru,'#EAF2FF')}
+    ${kartuStat(fmtPct(t.pctMasukTepat),'Masuk Tepat Waktu',PALET.hijau,'#E8F9EE')}
+    ${kartuStat(fmtPct(t.pctKeluarTepat),'Keluar Tepat Waktu',PALET.oranye,'#FEF3E0')}
+  </div>`;
+  const donat = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0;">
+    ${svgDonut('Status Kehadiran',[
+      {label:'Hadir',value:t.hadir,color:PALET.hijau},
+      {label:'Tidak Hadir',value:t.tidakHadir,color:PALET.merah},
+      {label:'Belum Diinput',value:t.belum,color:PALET.abu}], fmtPct(t.pctHadir), 'hadir')}
+    ${svgDonut('Ketepatan Masuk',[
+      {label:'Tepat Waktu',value:t.hadir-t.terlambat,color:PALET.tosca},
+      {label:'Terlambat',value:t.terlambat,color:PALET.pink}], fmtPct(t.pctMasukTepat), 'tepat waktu')}
+    ${svgDonut('Ketepatan Keluar',[
+      {label:'Tepat Waktu',value:t.keluarTercatat-t.keluarCepat,color:PALET.biru},
+      {label:'Lebih Cepat',value:t.keluarCepat,color:PALET.oranye}], fmtPct(t.pctKeluarTepat), 'tepat waktu')}
+  </div>`;
+  const batang = `<div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:10px 12px;margin-top:8px;">
+    <div style="font-size:12.5px;font-weight:700;color:#1E293B;margin-bottom:2px;">Capaian per Mata Pelajaran (%)</div>
+    ${svgBatangGrup(h.mapel.map(x=>({label:x.nama, vals:[x.pctHadir,x.pctMasukTepat,x.pctKeluarTepat]})), SERI_METRIK)}
+  </div>`;
+  return kartu + donat + batang;
+}
+
+/* Tabel Mata Pelajaran | Interpretasi */
+function tabelInterpretasi(h, mode){
+  const cellUl = list => `<ul style="margin:0;padding-left:16px;">${list.map(k=>`<li style="margin:2px 0;">${esc(k)}</li>`).join('')}</ul>`;
+  return `<table class="tbl-interp" style="width:100%;border-collapse:collapse;margin-top:6px;font-size:${mode==='cetak'?'11':'13'}px;line-height:1.5;">
+    <thead><tr>
+      <th style="background:#EEF2FF;border:1px solid #CBD5E1;padding:7px 9px;text-align:left;width:26%;">Mata Pelajaran</th>
+      <th style="background:#EEF2FF;border:1px solid #CBD5E1;padding:7px 9px;text-align:left;">Interpretasi</th>
+    </tr></thead>
+    <tbody>${h.mapel.map((x,i)=>`<tr style="background:${i%2?'#F8FAFC':'#FFFFFF'};page-break-inside:avoid;">
+      <td style="border:1px solid #CBD5E1;padding:7px 9px;vertical-align:top;font-weight:700;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${warnaLevel(x)};margin-right:6px;"></span>${esc(x.nama)}</td>
+      <td style="border:1px solid #CBD5E1;padding:7px 9px;vertical-align:top;">${cellUl(x.interpList)}</td>
+    </tr>`).join('')}</tbody>
+  </table>
+  <div style="font-size:11px;color:#64748B;margin-top:4px;"><span style="color:${PALET.hijau};">●</span> sangat baik (≥90%) &nbsp; <span style="color:${PALET.oranye};">●</span> cukup baik (75–89%) &nbsp; <span style="color:${PALET.merah};">●</span> perlu perhatian (&lt;75%) &nbsp; <span style="color:${PALET.abu};">●</span> belum ada data</div>`;
+}
+
+function judulTingkat(t){ return t==='Lainnya' ? 'Tingkat Lainnya' : 'Kelas '+t; }
 
 function renderAnalisisMapel(){
   if(state.agendaLoading){
@@ -3396,27 +3530,13 @@ function renderAnalisisMapel(){
     <p class="hint" style="margin-top:14px;"><b>${esc(A.periode.label)}</b>${A.terpotong ? ' — hanya dihitung sampai hari ini' : ''}</p>
     ${A.hasil.length===0 ? `<div class="empty-state" style="margin-top:14px;"><div class="ico">📊</div>Tidak ada sesi terjadwal pada periode ini.</div>` :
       A.hasil.map(h=>`
-      <div class="slot-card" style="margin-top:16px;">
-        <h3 style="font-family:'Zilla Slab',serif;margin:0 0 8px;font-size:17px;">${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h3>
-        <div class="stat-grid">
-          <div class="stat-card"><div class="num">${h.total.terjadwal}</div><div class="lbl">Sesi Terjadwal</div></div>
-          <div class="stat-card"><div class="num" style="color:var(--ok);">${fmtPct(h.total.pctHadir)}</div><div class="lbl">Kehadiran</div></div>
-          <div class="stat-card"><div class="num">${fmtPct(h.total.pctMasukTepat)}</div><div class="lbl">Masuk Tepat Waktu</div></div>
-          <div class="stat-card"><div class="num">${fmtPct(h.total.pctKeluarTepat)}</div><div class="lbl">Keluar Tepat Waktu</div></div>
-        </div>
-        <div class="table-scroll" style="margin-top:12px;">
-        <table>
-          <thead><tr><th>Mata Pelajaran</th><th>Sesi</th><th>Hadir</th><th>Tidak Hadir</th><th>Belum Input</th><th>% Hadir</th><th>% Masuk Tepat</th><th>% Keluar Tepat</th></tr></thead>
-          <tbody>${h.mapel.map(x=>`<tr>
-            <td>${esc(x.nama)}</td><td>${x.terjadwal}</td><td>${x.hadir}</td><td>${x.tidakHadir}</td><td>${x.belum}</td>
-            <td>${fmtPct(x.pctHadir)}</td><td>${fmtPct(x.pctMasukTepat)}</td><td>${fmtPct(x.pctKeluarTepat)}</td>
-          </tr>`).join('')}</tbody>
-        </table>
-        </div>
-        <h4 style="margin:14px 0 4px;font-size:14px;">Interpretasi per Mata Pelajaran</h4>
-        ${h.mapel.map(x=>`<p style="margin:6px 0;font-size:13.5px;line-height:1.55;"><b>${esc(x.nama)}:</b> ${esc(x.interpretasi)}</p>`).join('')}
-        <h4 style="margin:14px 0 4px;font-size:14px;">Kesimpulan ${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h4>
-        <p style="margin:6px 0;font-size:13.5px;line-height:1.55;">${esc(h.ringkasan)}</p>
+      <div class="slot-card" style="margin-top:16px;border-left:6px solid ${WARNA_TINGKAT[h.tingkat]||PALET.abu};">
+        <h3 style="font-family:'Zilla Slab',serif;margin:0 0 4px;font-size:18px;color:${WARNA_TINGKAT[h.tingkat]||PALET.abu};">${judulTingkat(h.tingkat)}</h3>
+        ${blokGrafikTingkat(h)}
+        <h4 style="margin:16px 0 4px;font-size:14px;">Interpretasi per Mata Pelajaran</h4>
+        <div class="table-scroll">${tabelInterpretasi(h,'layar')}</div>
+        <h4 style="margin:16px 0 4px;font-size:14px;">Kesimpulan ${judulTingkat(h.tingkat)}</h4>
+        <p style="margin:6px 0;font-size:13.5px;line-height:1.55;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:10px 12px;">${esc(h.ringkasan)}</p>
       </div>`).join('')}
   `;
 }
@@ -3444,44 +3564,28 @@ function doCetakAnalisis(){
 function buildAnalisisPrintHtml(A){
   const todayLabel = new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
   const sections = A.hasil.map(h=>`
-    <h2>${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h2>
-    <div class="stat-row">
-      <div class="stat-box"><div class="n">${h.total.terjadwal}</div><div class="l">Sesi Terjadwal</div></div>
-      <div class="stat-box"><div class="n">${fmtPct(h.total.pctHadir)}</div><div class="l">Kehadiran</div></div>
-      <div class="stat-box"><div class="n">${fmtPct(h.total.pctMasukTepat)}</div><div class="l">Masuk Tepat Waktu</div></div>
-      <div class="stat-box"><div class="n">${fmtPct(h.total.pctKeluarTepat)}</div><div class="l">Keluar Tepat Waktu</div></div>
-    </div>
-    <table>
-      <thead><tr><th>Mata Pelajaran</th><th>Sesi</th><th>Hadir</th><th>Tidak Hadir</th><th>Belum Input</th><th>% Hadir</th><th>% Masuk Tepat</th><th>% Keluar Tepat</th></tr></thead>
-      <tbody>${h.mapel.map(x=>`<tr><td>${esc(x.nama)}</td><td>${x.terjadwal}</td><td>${x.hadir}</td><td>${x.tidakHadir}</td><td>${x.belum}</td><td>${fmtPct(x.pctHadir)}</td><td>${fmtPct(x.pctMasukTepat)}</td><td>${fmtPct(x.pctKeluarTepat)}</td></tr>`).join('')}</tbody>
-    </table>
+    <h2 style="border-bottom:3px solid ${WARNA_TINGKAT[h.tingkat]||PALET.abu};color:${WARNA_TINGKAT[h.tingkat]||PALET.abu};">${judulTingkat(h.tingkat)}</h2>
+    ${blokGrafikTingkat(h)}
     <h3>Interpretasi per Mata Pelajaran</h3>
-    ${h.mapel.map(x=>`<p><b>${esc(x.nama)}:</b> ${esc(x.interpretasi)}</p>`).join('')}
-    <h3>Kesimpulan ${h.tingkat==='Lainnya'?'Tingkat Lainnya':'Kelas '+h.tingkat}</h3>
+    ${tabelInterpretasi(h,'cetak')}
+    <h3>Kesimpulan ${judulTingkat(h.tingkat)}</h3>
     <div class="kesimpulan">${esc(h.ringkasan)}</div>
   `).join('');
   return `<!DOCTYPE html>
 <html lang="id"><head><meta charset="UTF-8">
 <title>Analisis Mapel — ${esc(A.periode.label)}</title>
 <style>
-  @page{ size:A4; margin:16mm; }
-  body{ font-family: Georgia, 'Times New Roman', serif; color:#1E2A38; margin:0; padding:0 4px; }
-  .head{ text-align:center; border-bottom:3px double #1E2A38; padding-bottom:10px; margin-bottom:16px; }
-  .head h1{ font-size:18px; margin:0; }
-  .head p{ font-size:12px; margin:2px 0 0; color:#444; }
-  h2{ font-size:16px; margin:22px 0 6px; border-bottom:1px solid #999; padding-bottom:3px; page-break-after:avoid; }
-  h3{ font-size:13px; margin:14px 0 4px; }
-  p{ font-size:12px; line-height:1.55; margin:4px 0; text-align:justify; }
+  @page{ size:A4; margin:14mm; }
+  *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{ font-family: 'Segoe UI', Arial, sans-serif; color:#1E2A38; margin:0; padding:0 4px; }
+  .head{ text-align:center; border-bottom:3px double #1E2A38; padding-bottom:10px; margin-bottom:14px; }
+  .head h1{ font-size:19px; margin:0; letter-spacing:.5px; }
+  .head p{ font-size:12px; margin:3px 0 0; color:#444; }
+  h2{ font-size:17px; margin:24px 0 8px; padding-bottom:3px; page-break-after:avoid; }
+  h3{ font-size:13px; margin:16px 0 4px; page-break-after:avoid; }
   .meta{ font-size:12.5px; margin:2px 0; }
   .meta b{ display:inline-block; min-width:110px; }
-  table{ width:100%; border-collapse:collapse; margin-top:8px; font-size:11px; }
-  th,td{ border:1px solid #999; padding:4px 6px; text-align:left; }
-  th{ background:#EDE6D3; }
-  .stat-row{ display:flex; gap:12px; margin:8px 0; flex-wrap:wrap; }
-  .stat-box{ border:1px solid #999; padding:6px 12px; border-radius:6px; min-width:100px; text-align:center; }
-  .stat-box .n{ font-size:17px; font-weight:bold; }
-  .stat-box .l{ font-size:10.5px; color:#555; }
-  .kesimpulan{ padding:10px; border:1.5px solid #999; border-radius:6px; background:#FBF9F2; font-size:12px; line-height:1.6; text-align:justify; }
+  .kesimpulan{ padding:10px 12px; border:1px solid #CBD5E1; border-radius:8px; background:#F8FAFC; font-size:12px; line-height:1.6; text-align:justify; }
   .sign{ margin-top:36px; display:flex; justify-content:space-between; font-size:12px; page-break-inside:avoid; }
   .sign div{ text-align:center; width:220px; }
   .sign .line{ margin-top:50px; border-top:1px solid #333; }
@@ -3502,7 +3606,6 @@ function buildAnalisisPrintHtml(A){
   <div class="no-print" style="margin-top:20px;text-align:center;"><button onclick="window.print()">Cetak</button></div>
 </body></html>`;
 }
-
 
 /* ===================== SIDEBAR ===================== */
 function renderSidebar(){
@@ -3589,6 +3692,12 @@ function renderDashboardKehadiran(){
       <div class="stat-card"><div class="num" style="color:var(--neutral);">${fmtPct(total.pctCakupan)}</div><div class="lbl">Data Terinput (${total.tercatat}/${total.terjadwal} sesi)</div></div>
     </div>
 
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 0;">
+      ${svgDonut('Status Kehadiran',[{label:'Hadir',value:total.hadir,color:PALET.hijau},{label:'Tidak Hadir',value:total.tidakHadir,color:PALET.merah},{label:'Belum Diinput',value:total.belum,color:PALET.abu}], fmtPct(total.pctHadir),'hadir')}
+      ${svgDonut('Ketepatan Masuk',[{label:'Tepat Waktu',value:total.hadir-total.terlambat,color:PALET.tosca},{label:'Terlambat',value:total.terlambat,color:PALET.pink}], fmtPct(total.pctMasukTepat),'tepat waktu')}
+      ${svgDonut('Ketepatan Keluar',[{label:'Tepat Waktu',value:total.keluarTercatat-total.keluarCepat,color:PALET.biru},{label:'Lebih Cepat',value:total.keluarCepat,color:PALET.oranye}], fmtPct(total.pctKeluarTepat),'tepat waktu')}
+    </div>
+
     <div class="slot-card" style="margin-top:16px;">
       <h3 style="font-family:'Zilla Slab',serif;margin:0 0 6px;font-size:16px;">Interpretasi Umum</h3>
       <p style="margin:0;font-size:14px;line-height:1.6;">${esc(interpretasiMetrik(total,'seluruh mata pelajaran'))}</p>
@@ -3596,8 +3705,8 @@ function renderDashboardKehadiran(){
     </div>
 
     <div class="slot-card" style="margin-top:16px;">
-      <div class="hint" style="margin:0 0 8px;">Capaian per tingkat (hijau ≥90%, kuning 75–89%, merah &lt;75%)</div>
-      ${svgBarChart(bars,{max:100,suffix:'%'})}
+      <div class="hint" style="margin:0 0 8px;">Capaian per tingkat (%)</div>
+      ${svgBatangGrup(A.hasil.map(h=>({label:h.tingkat==='Lainnya'?'Lainnya':'Kelas '+h.tingkat, vals:[h.total.pctHadir,h.total.pctMasukTepat,h.total.pctKeluarTepat]})), SERI_METRIK)}
     </div>
 
     <div class="slot-card" style="margin-top:16px;">
