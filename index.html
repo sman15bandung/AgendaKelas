@@ -354,6 +354,7 @@ const state = {
     massal:{tanggal: todayStr(), kelas:'', statusGlobal:'hadir_tepat', materiGlobal:'', kegiatanGlobal:'', deskripsiTugasGlobal:'', rows:{}},
     cetak:{mapel:'', jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr()},
     dash:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr()},
+    analisisGuru:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr(), guru:'semua'},
     analisis:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr(), tingkat:'semua'},
     fotoView:null,
     saving:false,
@@ -774,7 +775,7 @@ function renderTabs(){
     </div>`;
   }
   if(!state.adminAuthed) return '';
-  const tabs = [['input','Input Absensi'],['massal','Input Massal'],['riwayat','Riwayat'],['harian','Laporan Harian'],['jadwal','Jadwal Pelajaran'],['pin','Kelas & PIN'],['toleransi','Toleransi Waktu'],['laporan','Laporan Bulanan'],['analisis','Analisis Mapel'],['cetak','Cetak Laporan']];
+  const tabs = [['input','Input Absensi'],['massal','Input Massal'],['riwayat','Riwayat'],['harian','Laporan Harian'],['jadwal','Jadwal Pelajaran'],['pin','Kelas & PIN'],['toleransi','Toleransi Waktu'],['laporan','Laporan Bulanan'],['analisis','Analisis Mapel'],['analisisGuru','Analisis Guru'],['cetak','Cetak Laporan']];
   return `<div class="tabs">${tabs.map(([k,l])=>`
     <div class="tab-btn ${state.tab===k?'active':''}" data-action="switch-tab" data-tab="${k}">${l}</div>
   `).join('')}</div>`;
@@ -792,6 +793,7 @@ function renderTabContent(){
     if(state.tab==='toleransi') return renderToleransiAdmin();
     if(state.tab==='laporan') return renderLaporan();
     if(state.tab==='analisis') return renderAnalisisMapel();
+    if(state.tab==='analisisGuru') return renderAnalisisGuru();
     if(state.tab==='cetak') return renderCetakLaporan();
   }
   if(state.mode==='siswa' && !state.siswaAuth.loggedIn) return renderSiswaLogin();
@@ -2398,6 +2400,9 @@ function handleAction(action, el){
     case 'cetak-laporan-mapel': doCetakLaporanMapel(); break;
     case 'set-analisis-jenis': state.ui.analisis.jenis = el.getAttribute('data-val'); render(); break;
     case 'filter-analisis': doFilterAnalisis(); break;
+    case 'set-ag-jenis': state.ui.analisisGuru.jenis = el.getAttribute('data-val'); render(); break;
+    case 'filter-ag': doFilterAnalisisGuru(); break;
+    case 'cetak-ag': doCetakAnalisisGuru(); break;
     case 'cetak-analisis': doCetakAnalisis(); break;
   }
 }
@@ -3757,6 +3762,233 @@ function doFilterDash(){
   const bl = document.getElementById('ds-bulan'); if(bl) c.bulan = Number(bl.value);
   const th = document.getElementById('ds-tahun'); if(th) c.tahun = Number(th.value) || c.tahun;
   render();
+}
+
+
+/* ===================== ANALISIS PER GURU (PORTAL ADMIN) ===================== */
+const _guruCanon = {};
+function normGuru(n){
+  let t = String(n||'').replace(/\s+/g,' ').replace(/[\s,:;]+$/,'').trim();
+  if(!t) t = 'Tanpa Nama Guru';
+  const key = t.toLowerCase().replace(/\s*,\s*/g,', ').replace(/\.\s+/g,'.');
+  if(!_guruCanon[key]) _guruCanon[key] = t;
+  return _guruCanon[key];
+}
+
+function hitungAnalisisGuru(cfg){
+  const per = analisisPeriode(cfg);
+  const today = todayStr();
+  const endEff = per.end > today ? today : per.end;
+  const blocks = getAllJadwalBlocks();
+  const rows = [];
+  if(per.start <= endEff){
+    let cur = new Date(per.start+'T00:00:00');
+    const end = new Date(endEff+'T00:00:00');
+    while(cur<=end){
+      const tgl = dateToStr(cur);
+      const hari = getHariFromTanggal(tgl);
+      blocks.filter(j=>j.hari===hari).forEach(jd=>{
+        rows.push({tanggal:tgl, jd, guru:normGuru(jd.guru), mapel:normMapel(jd.mapel), kelas:String(jd.kelas||'').trim(), entry:entryExists(jd.id, tgl)});
+      });
+      cur = addDays(cur,1);
+    }
+  }
+  const pilih = cfg.guru && cfg.guru!=='semua' ? normGuru(cfg.guru) : null;
+  const guruSet = [...new Set(rows.map(r=>r.guru))].filter(g=>!pilih || g===pilih)
+    .sort((a,b)=>a.localeCompare(b,'id'));
+  const hasil = guruSet.map(g=>{
+    const rg = rows.filter(r=>r.guru===g);
+    const mapelSet = [...new Set(rg.map(r=>r.mapel))].sort((a,b)=>a.localeCompare(b,'id'));
+    const mapel = mapelSet.map(mp=>{
+      const rm = rg.filter(r=>r.mapel===mp);
+      const m = hitungMetrik(rm);
+      const kelas = [...new Set(rm.map(r=>r.kelas))].sort((a,b)=>a.localeCompare(b,'id',{numeric:true}));
+      const list = interpretasiList(m,'mata pelajaran ini');
+      return Object.assign({nama:mp, kelas, interpretasi:list.join(' '), interpList:list}, m);
+    });
+    const total = hitungMetrik(rg);
+    let ringkasan = interpretasiMetrik(total, 'guru ini');
+    const berdata = mapel.filter(x=>x.pctHadir!==null);
+    if(berdata.length>1){
+      const low = berdata.slice().sort((a,b)=>a.pctHadir-b.pctHadir)[0];
+      if(low.pctHadir<90) ringkasan += ` Kehadiran terendah ada pada mata pelajaran ${low.nama} (${low.pctHadir}%).`;
+    }
+    return {guru:g, mapel, total, ringkasan};
+  });
+  return {periode:per, hasil, terpotong: per.end>today, pilih};
+}
+
+function daftarGuruJadwal(){
+  return [...new Set(getAllJadwalBlocks().map(j=>normGuru(j.guru)))].sort((a,b)=>a.localeCompare(b,'id'));
+}
+
+function svgTumpukStatus(m){
+  if(!m.terjadwal) return '';
+  const w = 560, h = 20;
+  const seg = [[m.hadir,PALET.hijau,'Hadir'],[m.tidakHadir,PALET.merah,'Tidak Hadir'],[m.belum,PALET.abu,'Belum Diinput']];
+  let x = 0;
+  const rects = seg.filter(sg=>sg[0]>0).map(([v,c,l])=>{
+    const ww = w*v/m.terjadwal; const r = `<rect x="${x.toFixed(1)}" y="0" width="${ww.toFixed(1)}" height="${h}" fill="${c}"><title>${l}: ${v}</title></rect>`; x += ww; return r;
+  }).join('');
+  const legend = seg.map(([v,c,l])=>`<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;"><span style="width:10px;height:10px;border-radius:3px;background:${c};display:inline-block;"></span>${l}: <b>${v}</b></span>`).join('');
+  return `<div style="margin:6px 0 2px;"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" width="100%" height="${h}" style="max-width:100%;border-radius:6px;overflow:hidden;display:block;" xmlns="http://www.w3.org/2000/svg"><rect width="${w}" height="${h}" fill="#F1F5F9"/>${rects}</svg><div style="font-size:11px;color:#334155;margin-top:3px;">${legend}</div></div>`;
+}
+
+function tabelInterpretasiGuru(g, mode){
+  const fs = mode==='cetak' ? 10.5 : 13;
+  const th = 'background:#EEF2FF;border:1px solid #CBD5E1;padding:6px 8px;text-align:left;';
+  const td = 'border:1px solid #CBD5E1;padding:6px 8px;vertical-align:top;';
+  const cellUl = list => `<ul style="margin:0;padding-left:15px;">${list.map(k=>`<li style="margin:1px 0;">${esc(k)}</li>`).join('')}</ul>`;
+  return `${legendSeri()}
+  <table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:${fs}px;line-height:1.45;">
+    <thead><tr>
+      <th style="${th}width:16%;">Mata Pelajaran</th>
+      <th style="${th}width:12%;">Kelas</th>
+      <th style="${th}width:25%;">Capaian (%)</th>
+      <th style="${th}">Interpretasi</th>
+    </tr></thead>
+    <tbody>${g.mapel.map((x,i)=>`<tr style="background:${i%2?'#F8FAFC':'#FFFFFF'};page-break-inside:avoid;">
+      <td style="${td}font-weight:700;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${warnaLevel(x)};margin-right:6px;"></span>${esc(x.nama)}</td>
+      <td style="${td}">${esc(x.kelas.join(', '))}</td>
+      <td style="${td}">${svgBatangMini([x.pctHadir,x.pctMasukTepat,x.pctKeluarTepat])}</td>
+      <td style="${td}">${cellUl(x.interpList)}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function blokGuru(g, mode){
+  const t = g.total, warna = warnaLevel(t);
+  const chips = g.mapel.map((x,i)=>{
+    const col = [PALET.biru,PALET.hijau,PALET.oranye,PALET.ungu,PALET.tosca,PALET.pink][i%6];
+    return `<span style="display:inline-block;background:${col}1F;color:${col};border:1px solid ${col}66;border-radius:999px;padding:2px 10px;font-size:11.5px;font-weight:600;margin:2px 4px 2px 0;">${esc(x.nama)}</span>`;
+  }).join('');
+  const kelasAll = [...new Set(g.mapel.flatMap(x=>x.kelas))].sort((a,b)=>a.localeCompare(b,'id',{numeric:true}));
+  const kecil = g.mapel.length<=3;
+  return `<section class="guru-sec${kecil?' utuh':''}" style="border-left:6px solid ${warna};background:#FFFFFF;border-radius:10px;padding:10px 14px;margin-top:14px;${mode==='layar'?'box-shadow:0 1px 4px rgba(30,42,56,.08);border-top:1px solid #E2E8F0;border-right:1px solid #E2E8F0;border-bottom:1px solid #E2E8F0;':''}">
+    <div class="blok-atas">
+      <h3 style="font-family:'Zilla Slab',Georgia,serif;margin:0;font-size:${mode==='cetak'?'15':'18'}px;color:#1E293B;">${esc(g.guru)}</h3>
+      <div style="font-size:11.5px;color:#64748B;margin:2px 0 4px;">Mengampu ${g.mapel.length} mata pelajaran · kelas ${esc(kelasAll.join(', '))}</div>
+      <div>${chips}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 4px;">
+        ${kartuStat(t.terjadwal,'Sesi Terjadwal',PALET.ungu,'#F3EEFF')}
+        ${kartuStat(fmtPct(t.pctHadir),'Kehadiran',PALET.biru,'#EAF2FF')}
+        ${kartuStat(fmtPct(t.pctMasukTepat),'Masuk Tepat Waktu',PALET.hijau,'#E8F9EE')}
+        ${kartuStat(fmtPct(t.pctKeluarTepat),'Keluar Tepat Waktu',PALET.oranye,'#FEF3E0')}
+      </div>
+      ${svgTumpukStatus(t)}
+    </div>
+    <h4 style="margin:10px 0 2px;font-size:${mode==='cetak'?'12.5':'14'}px;">Capaian &amp; Interpretasi per Mata Pelajaran yang Diampu</h4>
+    ${tabelInterpretasiGuru(g, mode)}
+    <h4 style="margin:10px 0 4px;font-size:${mode==='cetak'?'12.5':'14'}px;">Kesimpulan</h4>
+    <div class="kesimpulan" style="padding:9px 12px;border:1px solid #CBD5E1;border-radius:8px;background:#F8FAFC;font-size:${mode==='cetak'?'12':'13.5'}px;line-height:1.6;">${esc(g.ringkasan)}</div>
+  </section>`;
+}
+
+/* Grafik ringkasan semua guru, dipecah per 12 guru agar tidak kepanjangan */
+function ringkasanSemuaGuru(hasil){
+  if(hasil.length<2) return '';
+  const chunks = [];
+  for(let i=0;i<hasil.length;i+=12) chunks.push(hasil.slice(i,i+12));
+  return `<div style="margin-top:12px;">
+    <div style="font-size:13px;font-weight:700;color:#1E293B;">Ringkasan Capaian per Guru (%)</div>
+    ${legendSeri()}
+    ${chunks.map(ch=>`<div style="background:#FFFFFF;border:1px solid #E2E8F0;border-radius:12px;padding:8px 10px;margin-top:8px;break-inside:avoid;page-break-inside:avoid;">${svgBatangGrup(ch.map(g=>({label:g.guru, vals:[g.total.pctHadir,g.total.pctMasukTepat,g.total.pctKeluarTepat]})), SERI_METRIK)}</div>`).join('')}
+  </div>`;
+}
+
+function renderAnalisisGuru(){
+  if(state.agendaLoading){
+    return `<div class="empty-state"><div class="ico">⏳</div>Memuat riwayat absensi (mungkin agak lama kalau datanya sudah banyak)...</div>`;
+  }
+  const c = state.ui.analisisGuru;
+  const G = hitungAnalisisGuru(c);
+  const guruAda = daftarGuruJadwal();
+  return `
+    <h2 class="section-title">Analisis per Guru</h2>
+    <p class="hint">Analisis kehadiran dan ketepatan waktu tiap guru berdasarkan mata pelajaran yang diampu, lengkap dengan interpretasinya. Menu ini hanya ada di Portal Admin.</p>
+    <label>Jenis Laporan</label>
+    <div class="radio-group">
+      ${[['harian','Harian'],['mingguan','Mingguan'],['bulanan','Bulanan']].map(([v,l])=>`<div class="radio-opt ${c.jenis===v?'selected':''}" data-action="set-ag-jenis" data-val="${v}">${l}</div>`).join('')}
+    </div>
+    ${c.jenis==='bulanan' ? `
+    <div class="row">
+      <div><label>Bulan</label><select id="ag-bulan">${ANALISIS_BULAN.map((m,i)=>`<option value="${i+1}" ${String(c.bulan)===String(i+1)?'selected':''}>${m}</option>`).join('')}</select></div>
+      <div><label>Tahun</label><input type="number" id="ag-tahun" value="${c.tahun}"/></div>
+    </div>` : `
+    <div class="row">
+      <div><label>${c.jenis==='harian'?'Tanggal':'Tanggal (dalam minggu yang dituju)'}</label><input type="date" id="ag-tanggal" value="${c.tanggal}"/></div>
+    </div>
+    ${c.jenis==='mingguan' ? '<p class="hint">Minggu dihitung dari Senin sampai Minggu pada minggu yang memuat tanggal di atas.</p>' : ''}`}
+    <label>Guru</label>
+    <select id="ag-guru">
+      <option value="semua" ${c.guru==='semua'?'selected':''}>Semua Guru</option>
+      ${guruAda.map(g=>`<option value="${esc(g)}" ${c.guru===g?'selected':''}>${esc(g)}</option>`).join('')}
+    </select>
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="filter-ag">Tampilkan</button>
+      <button class="btn" data-action="cetak-ag">🖨️ Cetak</button>
+    </div>
+    <p class="hint" style="margin-top:14px;"><b>${esc(G.periode.label)}</b>${G.terpotong ? ' — hanya dihitung sampai hari ini' : ''}</p>
+    ${G.hasil.length===0 ? `<div class="empty-state" style="margin-top:14px;"><div class="ico">👩‍🏫</div>Tidak ada sesi terjadwal${G.pilih?' untuk guru ini':''} pada periode ini.</div>` :
+      ringkasanSemuaGuru(G.hasil) + G.hasil.map(g=>blokGuru(g,'layar')).join('')}
+  `;
+}
+
+function doFilterAnalisisGuru(){
+  const c = state.ui.analisisGuru;
+  const tg = document.getElementById('ag-tanggal'); if(tg) c.tanggal = tg.value || todayStr();
+  const bl = document.getElementById('ag-bulan'); if(bl) c.bulan = Number(bl.value);
+  const th = document.getElementById('ag-tahun'); if(th) c.tahun = Number(th.value) || c.tahun;
+  const gr = document.getElementById('ag-guru'); if(gr) c.guru = gr.value;
+  render();
+}
+
+function doCetakAnalisisGuru(){
+  doFilterAnalisisGuru();
+  const G = hitungAnalisisGuru(state.ui.analisisGuru);
+  if(G.hasil.length===0){ alert('Tidak ada data sesi pada periode ini untuk dicetak.'); return; }
+  const win = window.open('', '_blank');
+  if(!win){ alert('Popup diblokir oleh peramban. Izinkan popup untuk mencetak laporan.'); return; }
+  win.document.write(buildAnalisisGuruPrintHtml(G));
+  win.document.close();
+  win.onload = ()=>{ win.focus(); win.print(); };
+}
+
+function buildAnalisisGuruPrintHtml(G){
+  const todayLabel = new Date().toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+  return `<!DOCTYPE html>
+<html lang="id"><head><meta charset="UTF-8">
+<title>Analisis Guru — ${esc(G.periode.label)}</title>
+<style>
+  @page{ size:A4; margin:14mm; }
+  *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body{ font-family: 'Segoe UI', Arial, sans-serif; color:#1E2A38; margin:0; padding:0 4px; }
+  .head{ text-align:center; border-bottom:3px double #1E2A38; padding-bottom:10px; margin-bottom:14px; }
+  .head h1{ font-size:19px; margin:0; letter-spacing:.5px; }
+  .head p{ font-size:12px; margin:3px 0 0; color:#444; }
+  .meta{ font-size:12.5px; margin:2px 0; }
+  .meta b{ display:inline-block; min-width:110px; }
+  .guru-sec.utuh{ break-inside:avoid; page-break-inside:avoid; }
+  .blok-atas{ break-inside:avoid; page-break-inside:avoid; }
+  .kesimpulan{ break-inside:avoid; page-break-inside:avoid; }
+  table{ break-inside:auto; }
+  thead{ display:table-header-group; }
+  tr{ break-inside:avoid; page-break-inside:avoid; }
+  h3,h4{ break-after:avoid; page-break-after:avoid; }
+  @media print{ .no-print{ display:none; } }
+</style></head>
+<body>
+  <div class="head">
+    <h1>SMAN 15 BANDUNG</h1>
+    <p>Laporan Analisis Kehadiran &amp; Ketepatan Waktu Guru berdasarkan Mata Pelajaran yang Diampu</p>
+  </div>
+  <div class="meta"><b>Periode</b> : ${esc(G.periode.label)}</div>
+  <div class="meta"><b>Guru</b> : ${G.pilih ? esc(G.pilih) : 'Semua Guru ('+G.hasil.length+' guru)'}</div>
+  <div class="meta"><b>Dicetak pada</b> : ${todayLabel}</div>
+  ${ringkasanSemuaGuru(G.hasil)}
+  ${G.hasil.map(g=>blokGuru(g,'cetak')).join('')}
+  <div class="no-print" style="margin-top:20px;text-align:center;"><button onclick="window.print()">Cetak</button></div>
+</body></html>`;
 }
 
 /* ===================== INIT ===================== */
