@@ -2235,7 +2235,8 @@ function renderLaporan(){
       const pctKehadiran = expected>0 ? Math.round((d.hadir/expected)*100) : 0;
       const pctKeluarTepat = d.keluarTercatat>0 ? Math.round(((d.keluarTercatat-d.keluarCepat)/d.keluarTercatat)*100) : 0;
       const belumInput = Math.max(0, expected - d.total);
-      const kesimpulanMapel = buildKesimpulan(pctKehadiran, pctKeluarTepat, belumInput);
+      const pctTerlaksana = expected>0 ? Math.round(((d.hadir+d.tugasAda)/expected)*100) : 0;
+      const kesimpulanMapel = buildKesimpulan(pctKehadiran, pctKeluarTepat, belumInput, {tugasAda:d.tugasAda, tugasTidak:d.tugasTidak, pctTerlaksana});
       return `
       <div class="slot-card" style="margin-top:14px;">
         <div class="slot-head">
@@ -3285,12 +3286,16 @@ function doCetakLaporanMapel(){
   const guruSet = [...new Set(jadwalMapel.map(j=>j.guru))];
   const kelasSet = [...new Set(jadwalMapel.map(j=>j.kelas))];
 
-  const kesimpulan = buildKesimpulan(pctKehadiran, pctKeluarTepat, totalBelumInput);
+  const totalTugasAda = rows.filter(r=>r.entry && r.entry.tidakHadir && r.entry.adaTugas).length;
+  const totalTugasTidak = totalTidakHadir - totalTugasAda;
+  const pctTerlaksana = totalExpected>0 ? Math.round(((totalHadir+totalTugasAda)/totalExpected)*100) : 0;
+  const kesimpulan = buildKesimpulan(pctKehadiran, pctKeluarTepat, totalBelumInput, {tugasAda:totalTugasAda, tugasTidak:totalTugasTidak, pctTerlaksana});
 
   const html = buildPrintHtml({
     mapel:c.mapel, periodeLabel, guruSet, kelasSet,
     totalExpected, totalHadir, totalTidakHadir, totalBelumInput,
     totalKeluarCepat, totalKeluarTepat,
+    totalTugasAda, totalTugasTidak, pctTerlaksana,
     pctKehadiran, pctKeluarTepat,
     kesimpulan, rows
   });
@@ -3302,11 +3307,17 @@ function doCetakLaporanMapel(){
   win.onload = ()=>{ win.focus(); win.print(); };
 }
 
-function buildKesimpulan(pctKehadiran, pctKeluarTepat, belumInput){
+function buildKesimpulan(pctKehadiran, pctKeluarTepat, belumInput, info){
+  info = info || {};
+  const tugasAda = info.tugasAda||0, tugasTidak = info.tugasTidak||0;
+  const pctT = (info.pctTerlaksana!=null) ? info.pctTerlaksana : pctKehadiran;
   let bag1, bag3;
-  if(pctKehadiran>=90) bag1='sangat baik, hampir seluruh sesi pembelajaran terlaksana sesuai jadwal';
-  else if(pctKehadiran>=75) bag1='cukup baik, meskipun masih ada beberapa sesi yang tidak terlaksana';
-  else bag1='perlu menjadi perhatian karena cukup banyak sesi pembelajaran yang tidak terlaksana';
+  if(pctT>=90) bag1='sangat baik, hampir seluruh sesi pembelajaran tetap berjalan sesuai jadwal';
+  else if(pctT>=75) bag1='cukup baik, meskipun masih ada beberapa sesi yang kosong tanpa kegiatan belajar';
+  else bag1='perlu menjadi perhatian karena cukup banyak sesi yang kosong tanpa kegiatan belajar';
+  let tugasTxt = '';
+  if(tugasAda>0) tugasTxt += ` Pada ${tugasAda} sesi ketika guru berhalangan hadir, guru tetap memberikan tugas kepada siswa; hal ini menunjukkan guru tetap menjalankan tanggung jawab mengajarnya sehingga kegiatan belajar siswa tetap berlangsung.`;
+  if(tugasTidak>0) tugasTxt += ` Adapun ${tugasTidak} sesi guru tidak hadir tanpa memberikan tugas, sehingga siswa kehilangan waktu belajar pada sesi tersebut.`;
 
   if(pctKeluarTepat>=90) bag3='guru juga konsisten mengajar hingga waktu yang seharusnya';
   else if(pctKeluarTepat>=75) bag3='sebagian sesi diakhiri lebih cepat dari jadwal, meski secara umum masih dalam batas wajar';
@@ -3315,7 +3326,7 @@ function buildKesimpulan(pctKehadiran, pctKeluarTepat, belumInput){
   let extra = '';
   if(belumInput>0) extra = ` Terdapat ${belumInput} sesi yang belum diinput datanya oleh siswa sehingga belum dapat dievaluasi.`;
 
-  return `Secara keseluruhan, tingkat kehadiran guru pada mata pelajaran ini ${bag1}. Pada saat mengakhiri pelajaran, ${bag3}. Kombinasi kehadiran dan ketepatan waktu keluar ini berdampak langsung pada keberlangsungan proses pembelajaran di kelas.${extra}`;
+  return `Secara keseluruhan, keterlaksanaan pembelajaran pada mata pelajaran ini ${bag1} (${pctT}% sesi terlaksana, dengan kehadiran tatap muka ${pctKehadiran}%).${tugasTxt} Pada saat mengakhiri pelajaran, ${bag3}. Kombinasi keterlaksanaan pembelajaran dan ketepatan waktu keluar ini berdampak langsung pada keberlangsungan proses pembelajaran di kelas.${extra}`;
 }
 
 function buildPrintHtml(d){
@@ -3372,9 +3383,11 @@ function buildPrintHtml(d){
   <div class="stat-row">
     <div class="stat-box"><div class="n">${d.totalExpected}</div><div class="l">Sesi Terjadwal</div></div>
     <div class="stat-box"><div class="n">${d.totalHadir}</div><div class="l">Hadir</div></div>
-    <div class="stat-box"><div class="n">${d.totalTidakHadir}</div><div class="l">Tidak Hadir</div></div>
+    <div class="stat-box"><div class="n">${d.totalTugasAda}</div><div class="l">Tidak Hadir, Ada Tugas</div></div>
+    <div class="stat-box"><div class="n">${d.totalTugasTidak}</div><div class="l">Tidak Hadir, Tanpa Tugas</div></div>
     <div class="stat-box"><div class="n">${d.totalBelumInput}</div><div class="l">Belum Diinput</div></div>
-    <div class="stat-box"><div class="n">${d.pctKehadiran}%</div><div class="l">% Kehadiran</div></div>
+    <div class="stat-box"><div class="n">${d.pctTerlaksana}%</div><div class="l">% Pembelajaran Terlaksana</div></div>
+    <div class="stat-box"><div class="n">${d.pctKehadiran}%</div><div class="l">% Kehadiran Tatap Muka</div></div>
     <div class="stat-box"><div class="n">${d.pctKeluarTepat}%</div><div class="l">% Tepat Waktu Keluar</div></div>
   </div>
 
@@ -3461,8 +3474,11 @@ function hitungMetrik(rows){
     }
   });
   m.tercatat = m.hadir + m.tidakHadir;
+  m.denganTugas = m.tidakHadir - m.tanpaTugas;
+  m.terlaksana = m.hadir + m.denganTugas;
   const pct = (a,b)=> b>0 ? Math.round((a/b)*100) : null;
   m.pctHadir = pct(m.hadir, m.tercatat);
+  m.pctTerlaksana = pct(m.terlaksana, m.tercatat);
   m.pctMasukTepat = pct(m.hadir-m.terlambat, m.hadir);
   m.pctKeluarTepat = pct(m.keluarTercatat-m.keluarCepat, m.keluarTercatat);
   m.pctCakupan = pct(m.tercatat, m.terjadwal);
@@ -3474,14 +3490,16 @@ function interpretasiList(m, subjek){
   if(m.terjadwal===0) return ['Tidak ada sesi terjadwal pada periode ini.'];
   if(m.tercatat===0) return [`Belum ada data absensi yang terinput untuk ${subjek} pada periode ini, sehingga belum dapat diinterpretasikan.`];
   const out = [];
-  if(m.pctHadir>=90) out.push(`Kehadiran pembelajaran ${subjek} sangat baik (${m.pctHadir}%); hampir seluruh sesi terlaksana sesuai jadwal.`);
-  else if(m.pctHadir>=75) out.push(`Kehadiran pembelajaran ${subjek} cukup baik (${m.pctHadir}%), namun masih ada sesi yang tidak terlaksana.`);
-  else out.push(`Kehadiran pembelajaran ${subjek} perlu perhatian (${m.pctHadir}%) karena cukup banyak sesi yang tidak terlaksana.`);
+  const viaTugas = m.denganTugas>0 ? ', baik melalui tatap muka maupun penugasan' : '';
+  if(m.pctTerlaksana>=90) out.push(`Keterlaksanaan pembelajaran ${subjek} sangat baik (${m.pctTerlaksana}%); hampir seluruh sesi tetap berjalan${viaTugas}.`);
+  else if(m.pctTerlaksana>=75) out.push(`Keterlaksanaan pembelajaran ${subjek} cukup baik (${m.pctTerlaksana}%)${viaTugas ? ' karena sebagian besar sesi tetap berjalan'+viaTugas : ''}, namun masih ada sesi yang kosong tanpa kegiatan belajar.`);
+  else out.push(`Keterlaksanaan pembelajaran ${subjek} perlu perhatian (${m.pctTerlaksana}%) karena cukup banyak sesi yang kosong tanpa kegiatan belajar.`);
 
-  if(m.tidakHadir>0){
-    if(m.tanpaTugas>0) out.push(`Dari ${m.tidakHadir} sesi yang tidak terlaksana, ${m.tanpaTugas} sesi tidak disertai tugas pengganti sehingga siswa kehilangan waktu belajar.`);
-    else out.push(`Seluruh ${m.tidakHadir} sesi yang tidak terlaksana disertai tugas pengganti, sehingga kegiatan belajar siswa tetap berjalan.`);
+  if(m.denganTugas>0){
+    const semua = m.tanpaTugas===0 ? (m.denganTugas>1 ? 'Pada seluruh sesi (' + m.denganTugas + ' sesi) ketika guru berhalangan hadir' : 'Pada 1 sesi ketika guru berhalangan hadir') : `Pada ${m.denganTugas} sesi ketika guru berhalangan hadir`;
+    out.push(`${semua}, guru tetap memberikan tugas. Hal ini menunjukkan guru tetap menjalankan tanggung jawab mengajarnya sehingga siswa tetap belajar.`);
   }
+  if(m.tanpaTugas>0) out.push(`Terdapat ${m.tanpaTugas} sesi guru tidak hadir tanpa memberikan tugas, sehingga siswa kehilangan waktu belajar pada sesi tersebut.`);
   if(m.hadir>0){
     if(m.pctMasukTepat>=90) out.push('Pembelajaran hampir selalu dimulai tepat waktu.');
     else if(m.pctMasukTepat>=75) out.push(`Sebagian sesi dimulai terlambat (${m.terlambat} sesi), masih dalam batas wajar.`);
@@ -3493,14 +3511,14 @@ function interpretasiList(m, subjek){
     else out.push(`Sesi cukup sering diakhiri lebih cepat dari jadwal (${m.keluarCepat} sesi), sehingga durasi efektif pembelajaran berkurang.`);
   }
   if(m.pctCakupan<80) out.push(`Data baru mencakup ${m.pctCakupan}% dari sesi terjadwal (${m.belum} sesi belum diinput), sehingga hasil ini bersifat sementara.`);
-  if(m.pctHadir<75 || (m.pctMasukTepat!==null && m.pctMasukTepat<75)) out.push('Disarankan tindak lanjut berupa koordinasi jadwal dan pembinaan kedisiplinan pembelajaran.');
+  if(m.pctTerlaksana<75 || (m.pctMasukTepat!==null && m.pctMasukTepat<75)) out.push('Disarankan tindak lanjut berupa koordinasi jadwal dan pembinaan kedisiplinan pembelajaran.');
   return out;
 }
 function interpretasiMetrik(m, subjek){ return interpretasiList(m, subjek).join(' '); }
 
 function warnaLevel(m){
   if(!m || m.tercatat===0) return PALET.abu;
-  const v = [m.pctHadir, m.pctMasukTepat, m.pctKeluarTepat].filter(x=>x!==null);
+  const v = [m.pctTerlaksana, m.pctMasukTepat, m.pctKeluarTepat].filter(x=>x!==null);
   const low = Math.min(...v);
   return low>=90 ? PALET.hijau : low>=75 ? PALET.oranye : PALET.merah;
 }
@@ -3536,10 +3554,10 @@ function hitungAnalisis(cfg){
     });
     const tot = hitungMetrik(rt);
     let ringkasan = interpretasiMetrik(tot, `Kelas ${t}`);
-    const berdata = mapel.filter(x=>x.pctHadir!==null);
+    const berdata = mapel.filter(x=>x.pctTerlaksana!==null);
     if(berdata.length>1){
-      const low = berdata.slice().sort((a,b)=>a.pctHadir-b.pctHadir)[0];
-      if(low.pctHadir<90) ringkasan += ` Mata pelajaran dengan kehadiran terendah adalah ${low.nama} (${low.pctHadir}%).`;
+      const low = berdata.slice().sort((a,b)=>a.pctTerlaksana-b.pctTerlaksana)[0];
+      if(low.pctTerlaksana<90) ringkasan += ` Mata pelajaran dengan keterlaksanaan pembelajaran terendah adalah ${low.nama} (${low.pctTerlaksana}%).`;
     }
     return {tingkat:t, total:tot, mapel, ringkasan};
   });
@@ -3638,7 +3656,8 @@ function blokGrafikTingkat(h){
   const donat = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0;">
     ${svgDonut('Status Kehadiran',[
       {label:'Hadir',value:t.hadir,color:PALET.hijau},
-      {label:'Tidak Hadir',value:t.tidakHadir,color:PALET.merah},
+      {label:'Tidak Hadir, Ada Tugas',value:t.denganTugas,color:PALET.oranye},
+      {label:'Tidak Hadir, Tanpa Tugas',value:t.tanpaTugas,color:PALET.merah},
       {label:'Belum Diinput',value:t.belum,color:PALET.abu}], fmtPct(t.pctHadir), 'hadir')}
     ${svgDonut('Ketepatan Masuk',[
       {label:'Tepat Waktu',value:t.hadir-t.terlambat,color:PALET.tosca},
@@ -3822,8 +3841,11 @@ function renderSidebar(){
 /* ===================== DASHBOARD INTERPRETASI KEHADIRAN GURU (TANPA NAMA GURU) ===================== */
 function finalisasiMetrik(m){
   m.tercatat = m.hadir + m.tidakHadir;
+  m.denganTugas = m.tidakHadir - m.tanpaTugas;
+  m.terlaksana = m.hadir + m.denganTugas;
   const pct = (a,b)=> b>0 ? Math.round((a/b)*100) : null;
   m.pctHadir = pct(m.hadir, m.tercatat);
+  m.pctTerlaksana = pct(m.terlaksana, m.tercatat);
   m.pctMasukTepat = pct(m.hadir-m.terlambat, m.hadir);
   m.pctKeluarTepat = pct(m.keluarTercatat-m.keluarCepat, m.keluarTercatat);
   m.pctCakupan = pct(m.tercatat, m.terjadwal);
@@ -3849,8 +3871,8 @@ function renderDashboardKehadiran(){
   A.hasil.forEach(h=>h.mapel.forEach(x=>{ (perMapel[x.nama] = perMapel[x.nama]||[]).push(x); }));
   const mapelAgg = Object.entries(perMapel).map(([nama,arr])=>Object.assign({nama}, gabungMetrik(arr)));
   const perhatian = mapelAgg
-    .filter(x=>x.tercatat>0 && ((x.pctHadir!==null&&x.pctHadir<75) || (x.pctMasukTepat!==null&&x.pctMasukTepat<75) || (x.pctKeluarTepat!==null&&x.pctKeluarTepat<75)))
-    .sort((a,b)=>(a.pctHadir??101)-(b.pctHadir??101)).slice(0,8);
+    .filter(x=>x.tercatat>0 && ((x.pctTerlaksana!==null&&x.pctTerlaksana<75) || (x.pctMasukTepat!==null&&x.pctMasukTepat<75) || (x.pctKeluarTepat!==null&&x.pctKeluarTepat<75)))
+    .sort((a,b)=>(a.pctTerlaksana??101)-(b.pctTerlaksana??101)).slice(0,8);
 
   const bars = [];
   A.hasil.forEach(h=>{
@@ -3876,14 +3898,15 @@ function renderDashboardKehadiran(){
     <p class="hint" style="margin-top:14px;"><b>${esc(A.periode.label)}</b>${A.terpotong?' — dihitung sampai hari ini':''}</p>
     ${total.terjadwal===0 ? `<div class="empty-state" style="margin-top:14px;"><div class="ico">📊</div>Tidak ada sesi terjadwal pada periode ini.</div>` : `
     <div class="stat-grid" style="margin-top:8px;">
-      <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctHadir)};">${fmtPct(total.pctHadir)}</div><div class="lbl">Kehadiran Guru</div></div>
+      <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctTerlaksana)};">${fmtPct(total.pctTerlaksana)}</div><div class="lbl">Pembelajaran Terlaksana</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--neutral);">${fmtPct(total.pctHadir)}</div><div class="lbl">Kehadiran Tatap Muka</div></div>
       <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctMasukTepat)};">${fmtPct(total.pctMasukTepat)}</div><div class="lbl">Masuk Tepat Waktu</div></div>
       <div class="stat-card"><div class="num" style="color:${warnaPct(total.pctKeluarTepat)};">${fmtPct(total.pctKeluarTepat)}</div><div class="lbl">Keluar Tepat Waktu</div></div>
       <div class="stat-card"><div class="num" style="color:var(--neutral);">${fmtPct(total.pctCakupan)}</div><div class="lbl">Data Terinput (${total.tercatat}/${total.terjadwal} sesi)</div></div>
     </div>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 0;">
-      ${svgDonut('Status Kehadiran',[{label:'Hadir',value:total.hadir,color:PALET.hijau},{label:'Tidak Hadir',value:total.tidakHadir,color:PALET.merah},{label:'Belum Diinput',value:total.belum,color:PALET.abu}], fmtPct(total.pctHadir),'hadir')}
+      ${svgDonut('Status Kehadiran',[{label:'Hadir',value:total.hadir,color:PALET.hijau},{label:'Tidak Hadir, Ada Tugas',value:total.denganTugas,color:PALET.oranye},{label:'Tidak Hadir, Tanpa Tugas',value:total.tanpaTugas,color:PALET.merah},{label:'Belum Diinput',value:total.belum,color:PALET.abu}], fmtPct(total.pctHadir),'hadir')}
       ${svgDonut('Ketepatan Masuk',[{label:'Tepat Waktu',value:total.hadir-total.terlambat,color:PALET.tosca},{label:'Terlambat',value:total.terlambat,color:PALET.pink}], fmtPct(total.pctMasukTepat),'tepat waktu')}
       ${svgDonut('Ketepatan Keluar',[{label:'Tepat Waktu',value:total.keluarTercatat-total.keluarCepat,color:PALET.biru},{label:'Lebih Cepat',value:total.keluarCepat,color:PALET.oranye}], fmtPct(total.pctKeluarTepat),'tepat waktu')}
     </div>
@@ -3891,7 +3914,7 @@ function renderDashboardKehadiran(){
     <div class="slot-card" style="margin-top:16px;">
       <h3 style="font-family:'Zilla Slab',serif;margin:0 0 6px;font-size:16px;">Interpretasi Umum</h3>
       <p style="margin:0;font-size:14px;line-height:1.6;">${esc(interpretasiMetrik(total,'seluruh mata pelajaran'))}</p>
-      <p class="hint" style="margin:8px 0 0;">Acuan: ≥90% sangat baik, 75–89% cukup baik, &lt;75% perlu perhatian.</p>
+      <p class="hint" style="margin:8px 0 0;">Pembelajaran terlaksana = guru hadir + guru tidak hadir namun memberikan tugas. Acuan: ≥90% sangat baik, 75–89% cukup baik, &lt;75% perlu perhatian.</p>
     </div>
 
     <div class="slot-card" style="margin-top:16px;">
@@ -3902,7 +3925,7 @@ function renderDashboardKehadiran(){
     <div class="slot-card" style="margin-top:16px;">
       <h3 style="font-family:'Zilla Slab',serif;margin:0 0 6px;font-size:16px;">Mata Pelajaran yang Perlu Perhatian</h3>
       ${perhatian.length===0 ? `<p style="margin:0;font-size:14px;">Tidak ada mata pelajaran dengan capaian di bawah 75% pada periode ini.</p>` :
-        perhatian.map(x=>`<p style="margin:8px 0;font-size:13.5px;line-height:1.55;"><b>${esc(x.nama)}</b> — kehadiran ${fmtPct(x.pctHadir)}, masuk tepat ${fmtPct(x.pctMasukTepat)}, keluar tepat ${fmtPct(x.pctKeluarTepat)}.<br>${esc(interpretasiMetrik(x,'mata pelajaran ini'))}</p>`).join('')}
+        perhatian.map(x=>`<p style="margin:8px 0;font-size:13.5px;line-height:1.55;"><b>${esc(x.nama)}</b> — pembelajaran terlaksana ${fmtPct(x.pctTerlaksana)}, kehadiran tatap muka ${fmtPct(x.pctHadir)}, masuk tepat ${fmtPct(x.pctMasukTepat)}, keluar tepat ${fmtPct(x.pctKeluarTepat)}.<br>${esc(interpretasiMetrik(x,'mata pelajaran ini'))}</p>`).join('')}
     </div>
 
     ${A.hasil.map(h=>`
@@ -3967,10 +3990,10 @@ function hitungAnalisisGuru(cfg){
     });
     const total = hitungMetrik(rg);
     let ringkasan = interpretasiMetrik(total, 'guru ini');
-    const berdata = mapel.filter(x=>x.pctHadir!==null);
+    const berdata = mapel.filter(x=>x.pctTerlaksana!==null);
     if(berdata.length>1){
-      const low = berdata.slice().sort((a,b)=>a.pctHadir-b.pctHadir)[0];
-      if(low.pctHadir<90) ringkasan += ` Kehadiran terendah ada pada mata pelajaran ${low.nama} (${low.pctHadir}%).`;
+      const low = berdata.slice().sort((a,b)=>a.pctTerlaksana-b.pctTerlaksana)[0];
+      if(low.pctTerlaksana<90) ringkasan += ` Keterlaksanaan pembelajaran terendah ada pada mata pelajaran ${low.nama} (${low.pctTerlaksana}%).`;
     }
     return {guru:g, mapel, total, ringkasan};
   });
@@ -3984,7 +4007,7 @@ function daftarGuruJadwal(){
 function svgTumpukStatus(m){
   if(!m.terjadwal) return '';
   const w = 560, h = 20;
-  const seg = [[m.hadir,PALET.hijau,'Hadir'],[m.tidakHadir,PALET.merah,'Tidak Hadir'],[m.belum,PALET.abu,'Belum Diinput']];
+  const seg = [[m.hadir,PALET.hijau,'Hadir'],[m.denganTugas,PALET.oranye,'Tidak Hadir, Ada Tugas'],[m.tanpaTugas,PALET.merah,'Tidak Hadir, Tanpa Tugas'],[m.belum,PALET.abu,'Belum Diinput']];
   let x = 0;
   const rects = seg.filter(sg=>sg[0]>0).map(([v,c,l])=>{
     const ww = w*v/m.terjadwal; const r = `<rect x="${x.toFixed(1)}" y="0" width="${ww.toFixed(1)}" height="${h}" fill="${c}"><title>${l}: ${v}</title></rect>`; x += ww; return r;
