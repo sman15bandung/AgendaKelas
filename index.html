@@ -356,7 +356,7 @@ const state = {
     editEntryModal:null,
     editWaktuMassal:null,
     harianTanggal: todayStr(),
-    massal:{tanggal: todayStr(), kelas:'', statusGlobal:'hadir_tepat', materiGlobal:'', kegiatanGlobal:'', deskripsiTugasGlobal:'', rows:{}},
+    massal:{tanggal: todayStr(), kelas:[], statusGlobal:'hadir_tepat', materiGlobal:'', kegiatanGlobal:'', deskripsiTugasGlobal:'', rows:{}},
     cetak:{mapel:'', jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr()},
     dash:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr()},
     analisisGuru:{jenis:'mingguan', bulan:(new Date()).getMonth()+1, tahun:(new Date()).getFullYear(), tanggal: todayStr(), guru:'semua'},
@@ -1372,13 +1372,20 @@ const MASSAL_OPTIONS = [
   ['tidak_notugas','❌ Tidak Hadir — Tanpa Tugas'],
 ];
 
-function getMassalJadwal(){
+function getMassalKelas(){
   const m = state.ui.massal;
-  if(!m.kelas) return [];
+  if(!Array.isArray(m.kelas)) m.kelas = m.kelas ? [m.kelas] : [];
+  return m.kelas;
+}
+function getMassalJadwal(kelasTertentu){
+  const m = state.ui.massal;
+  const dipilih = kelasTertentu ? [kelasTertentu] : getMassalKelas();
+  if(dipilih.length===0) return [];
+  const urutan = sortKelasList([...dipilih]);
   const hari = getHariFromTanggal(m.tanggal);
   return getAllJadwalBlocks()
-    .filter(j=>j.kelas===m.kelas && j.hari===hari)
-    .sort((a,b)=>(a.jamKeAwal||0)-(b.jamKeAwal||0));
+    .filter(j=>dipilih.includes(j.kelas) && j.hari===hari)
+    .sort((a,b)=>urutan.indexOf(a.kelas)-urutan.indexOf(b.kelas) || (a.jamKeAwal||0)-(b.jamKeAwal||0));
 }
 
 function renderInputMassal(){
@@ -1386,19 +1393,24 @@ function renderInputMassal(){
     return `<div class="empty-state"><div class="ico">⏳</div>Memuat riwayat absensi...</div>`;
   }
   const m = state.ui.massal;
+  const dipilih = getMassalKelas();
   const kelasList = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
   const hari = getHariFromTanggal(m.tanggal);
   const jadwalHari = getMassalJadwal();
+  const semuaDipilih = kelasList.length>0 && kelasList.every(k=>dipilih.includes(k));
+  const kelasDenganJadwal = sortKelasList([...new Set(jadwalHari.map(j=>j.kelas))]);
+  const kelasTanpaJadwal = sortKelasList(dipilih.filter(k=>!kelasDenganJadwal.includes(k)));
 
   let body = '';
-  if(!m.kelas){
-    body = `<div class="empty-state" style="margin-top:16px;"><div class="ico">🏫</div>Pilih kelas terlebih dahulu.</div>`;
+  if(dipilih.length===0){
+    body = `<div class="empty-state" style="margin-top:16px;"><div class="ico">🏫</div>Pilih satu, beberapa, atau semua kelas terlebih dahulu.</div>`;
   } else if(jadwalHari.length===0){
-    body = `<div class="empty-state" style="margin-top:16px;"><div class="ico">🗓️</div>Tidak ada jadwal kelas ${esc(m.kelas)} pada hari ${esc(hari)}.</div>`;
+    body = `<div class="empty-state" style="margin-top:16px;"><div class="ico">🗓️</div>Tidak ada jadwal untuk kelas yang dipilih pada hari ${esc(hari)}.</div>`;
   } else {
     body = `
     <div class="slot-card" style="margin-top:16px;background:#EAF1F7;">
       <div class="slot-head"><div class="mapel">Terapkan ke Semua Sesi yang Belum Diisi</div></div>
+      <p class="hint" style="margin:0 0 6px;">Berlaku untuk ${kelasDenganJadwal.length} kelas yang dipilih (${jadwalHari.length} jam pelajaran).</p>
       <label>Status</label>
       <select id="ms-status-global">
         ${MASSAL_OPTIONS.filter(o=>o[0]!=='skip').map(([v,l])=>`<option value="${v}" ${m.statusGlobal===v?'selected':''}>${l}</option>`).join('')}
@@ -1414,7 +1426,13 @@ function renderInputMassal(){
     <textarea id="ms-deskripsi" placeholder="Contoh: Mengerjakan LKS halaman 10-12">${esc(m.deskripsiTugasGlobal)}</textarea>
 
     <h3 style="font-family:'Zilla Slab',serif;margin:18px 0 6px;font-size:15px;">Daftar Jam Pelajaran (${esc(hari)})</h3>
-    ${jadwalHari.map(jd=>{
+    ${kelasTanpaJadwal.length ? `<p class="hint">Tidak ada jadwal hari ${esc(hari)} untuk: ${kelasTanpaJadwal.map(esc).join(', ')}.</p>` : ''}
+    ${kelasDenganJadwal.map(kelas=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0 6px;padding:6px 10px;background:var(--paper-dark);border-radius:8px;">
+      <b style="font-family:'Zilla Slab',serif;font-size:15px;">Kelas ${esc(kelas)}</b>
+      <button class="btn btn-sm" data-action="massal-terapkan-kelas" data-val="${esc(kelas)}">Terapkan status ke kelas ini</button>
+    </div>
+    ${jadwalHari.filter(jd=>jd.kelas===kelas).map(jd=>{
       const existing = entryExists(jd.id, m.tanggal);
       const val = m.rows[jd.id] || 'skip';
       return `
@@ -1431,7 +1449,7 @@ function renderInputMassal(){
           </div>
         </div>
       </div>`;
-    }).join('')}
+    }).join('')}`).join('')}
 
     <div class="btn-row" style="margin-top:16px;">
       <button class="btn btn-primary" data-action="submit-massal" ${state.ui.saving?'disabled':''}>${state.ui.saving?(state.ui.importProgress||'Menyimpan...'):'💾 Simpan Semua'}</button>
@@ -1439,23 +1457,25 @@ function renderInputMassal(){
   }
 
   return `
-    <h2 class="section-title">Input Absen Massal per Kelas</h2>
-    <p class="hint">Isi kehadiran guru untuk semua jam pelajaran satu kelas pada satu hari sekaligus. Sesi yang sudah pernah diisi tidak akan diubah — edit lewat tab Riwayat.</p>
+    <h2 class="section-title">Input Absen Massal</h2>
+    <p class="hint">Isi kehadiran guru untuk semua jam pelajaran di satu, beberapa, atau semua kelas pada satu hari sekaligus. Sesi yang sudah pernah diisi tidak akan diubah — edit lewat tab Riwayat.</p>
     <div class="row">
       <div><label>Tanggal</label><input type="date" id="ms-tanggal" value="${m.tanggal}"/></div>
-      <div><label>Kelas</label>
-        <select id="ms-kelas">
-          <option value="">— Pilih kelas —</option>
-          ${kelasList.map(k=>`<option value="${esc(k)}" ${m.kelas===k?'selected':''}>${esc(k)}</option>`).join('')}
-        </select>
-      </div>
+    </div>
+    <label>Kelas <span style="font-weight:400;color:var(--ink-soft);">(${dipilih.length} dipilih — klik untuk memilih/membatalkan)</span></label>
+    <div class="radio-group">
+      <div class="radio-opt ${semuaDipilih?'selected':''}" data-action="massal-kelas-semua">${semuaDipilih?'☑':'☐'} Semua Kelas</div>
+      ${dipilih.length ? `<div class="radio-opt" data-action="massal-kelas-kosong">✕ Kosongkan</div>` : ''}
+    </div>
+    <div class="radio-group">
+      ${kelasList.map(k=>`<div class="radio-opt ${dipilih.includes(k)?'selected':''}" data-action="massal-kelas-toggle" data-val="${esc(k)}">${dipilih.includes(k)?'☑':'☐'} ${esc(k)}</div>`).join('')}
     </div>
     ${body}`;
 }
 
-function applyMassalToAll(){
+function applyMassalToAll(kelasTertentu){
   const m = state.ui.massal;
-  getMassalJadwal().forEach(jd=>{
+  getMassalJadwal(kelasTertentu).forEach(jd=>{
     if(entryExists(jd.id, m.tanggal)) return;
     m.rows[jd.id] = m.statusGlobal;
   });
@@ -1464,7 +1484,7 @@ function applyMassalToAll(){
 
 async function submitMassal(){
   const m = state.ui.massal;
-  if(!m.kelas){ alert('Pilih kelas terlebih dahulu.'); return; }
+  if(getMassalKelas().length===0){ alert('Pilih kelas terlebih dahulu.'); return; }
   const toSave = [];
   getMassalJadwal().forEach(jd=>{
     if(entryExists(jd.id, m.tanggal)) return;
@@ -1488,7 +1508,9 @@ async function submitMassal(){
     alert('Belum ada sesi yang dipilih. Pilih status pada minimal satu jam pelajaran, atau klik "Terapkan ke Semua".');
     return;
   }
-  if(!confirm('Simpan '+toSave.length+' data absensi kelas '+m.kelas+' tanggal '+fmtDateShort(m.tanggal)+'?')) return;
+  const kelasDisimpan = sortKelasList([...new Set(toSave.map(p=>{ const j=getMassalJadwal().find(x=>x.id===p.jadwalId); return j?j.kelas:''; }).filter(Boolean))]);
+  const ketKelas = kelasDisimpan.length<=5 ? 'kelas '+kelasDisimpan.join(', ') : kelasDisimpan.length+' kelas';
+  if(!confirm('Simpan '+toSave.length+' data absensi untuk '+ketKelas+' tanggal '+fmtDateShort(m.tanggal)+'?')) return;
 
   state.ui.saving = true;
   state.ui.importProgress = 'Menyimpan 0 dari '+toSave.length+'...';
@@ -2388,7 +2410,6 @@ function attachEvents(){
 
   /* Input massal per kelas */
   bindVal('ms-tanggal', v=>{ state.ui.massal.tanggal=v; state.ui.massal.rows={}; render(); });
-  bindVal('ms-kelas', v=>{ state.ui.massal.kelas=v; state.ui.massal.rows={}; render(); });
   bindVal('ms-status-global', v=>{ state.ui.massal.statusGlobal=v; });
   [['ms-materi','materiGlobal'],['ms-kegiatan','kegiatanGlobal'],['ms-deskripsi','deskripsiTugasGlobal']].forEach(([id,f])=>{
     const e = document.getElementById(id);
@@ -2541,6 +2562,19 @@ function handleAction(action, el){
       break;
     case 'confirm-import-rows': confirmImportRows(); break;
     case 'massal-terapkan-semua': applyMassalToAll(); break;
+    case 'massal-terapkan-kelas': applyMassalToAll(el.getAttribute('data-val')); break;
+    case 'massal-kelas-toggle': {
+      const k = el.getAttribute('data-val'); const arr = getMassalKelas();
+      const i = arr.indexOf(k); if(i>=0) arr.splice(i,1); else arr.push(k);
+      render(); break;
+    }
+    case 'massal-kelas-semua': {
+      const semua = sortKelasList([...new Set(state.jadwal.map(j=>j.kelas))]);
+      const arr = getMassalKelas();
+      state.ui.massal.kelas = semua.every(k=>arr.includes(k)) ? [] : semua;
+      render(); break;
+    }
+    case 'massal-kelas-kosong': state.ui.massal.kelas = []; render(); break;
     case 'submit-massal': submitMassal(); break;
     case 'save-toleransi': doSaveToleransi(); break;
     case 'save-pin': doSavePin(); break;
